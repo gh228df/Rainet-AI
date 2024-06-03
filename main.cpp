@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <chrono>
 #include <vector>
 #include <unordered_map>
@@ -17,8 +18,11 @@ struct field{
     uint64_t firv = 0;
     uint64_t secl = 0;
     uint64_t secv = 0;
-    int fir[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; //0b islink(1bit) 0 isrevealed(1bit) isboosted(1bit) ycoords(3bits) xcoords(3bits)
-    int sec[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; //0b islink(1bit) 0 isrevealed(1bit) isboosted(1bit) ycoords(3bits) xcoords(3bits)
+    // ints are used for simd instructions benefits
+    int fir[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; //0b 0 0 0 0 ycoords(3bits) xcoords(3bits)
+    int sec[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; //0b 0 0 0 0 ycoords(3bits) xcoords(3bits)
+    int boostedfir = -1;
+    int boostedsec = -1;
     int firlinkindex = 4;
     int firvirusindex = 8;
     int seclinkindex = 4;
@@ -102,7 +106,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 56 | 1024;
+            togenerate.fir[linkindex] = 56;
             togenerate.firl |= (1ULL << 56);
             linkindex++;
         }
@@ -113,7 +117,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 57 | 1024;
+            togenerate.fir[linkindex] = 57;
             togenerate.firl |= (1ULL << 57);
             linkindex++;
         }
@@ -124,7 +128,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 58 | 1024;
+            togenerate.fir[linkindex] = 58;
             togenerate.firl |= (1ULL << 58);
             linkindex++;
         }
@@ -135,7 +139,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 51 | 1024;
+            togenerate.fir[linkindex] = 51;
             togenerate.firl |= (1ULL << 51);
             linkindex++;
         }
@@ -146,7 +150,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 52 | 1024;
+            togenerate.fir[linkindex] = 52;
             togenerate.firl |= (1ULL << 52);
             linkindex++;
         }
@@ -157,7 +161,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 61 | 1024;
+            togenerate.fir[linkindex] = 61;
             togenerate.firl |= (1ULL << 61);
             linkindex++;
         }
@@ -168,7 +172,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 62 | 1024;
+            togenerate.fir[linkindex] = 62;
             togenerate.firl |= (1ULL << 62);
             linkindex++;
         }
@@ -178,7 +182,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.fir[linkindex] = 63 | 1024;
+            togenerate.fir[linkindex] = 63;
             togenerate.firl |= (1ULL << 63);
         }
     }
@@ -194,7 +198,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1024;
+            togenerate.sec[linkindex] = 0;
             togenerate.secl |= 1;
             linkindex++;
         }
@@ -205,7 +209,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1025;
+            togenerate.sec[linkindex] = 1;
             togenerate.secl |= 2;
             linkindex++;
         }
@@ -216,7 +220,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1026;
+            togenerate.sec[linkindex] = 2;
             togenerate.secl |= 4;
             linkindex++;
         }
@@ -227,7 +231,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1035;
+            togenerate.sec[linkindex] = 11;
             togenerate.secl |= 2048;
             linkindex++;
         }
@@ -238,7 +242,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1036;
+            togenerate.sec[linkindex] = 12;
             togenerate.secl |= 4096;
             linkindex++;
         }
@@ -249,7 +253,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1029;
+            togenerate.sec[linkindex] = 5;
             togenerate.secl |= 32;
             linkindex++;
         }
@@ -260,7 +264,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1030;
+            togenerate.sec[linkindex] = 6;
             togenerate.secl |= 64;
             linkindex++;
         }
@@ -270,7 +274,7 @@ void generatexfield(field &togenerate, bool player, int x){
         }
         else
         {
-            togenerate.sec[linkindex] = 1031;
+            togenerate.sec[linkindex] = 7;
             togenerate.secl |= 128;
         }
     }
@@ -4280,52 +4284,12 @@ int minimax(int depth, int alpha, int beta, bool player, field position){
     }
 }
 
-pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field position){
-    // if(player){
-    //     vector<field> allmoves = possiblemoves(position, true);
-    //     // for(int i = 0; i < allmoves.size(); ++i){
-    //     //     printfield(allmoves[i]);
-    //     // }
-    //     field bestfield = position;
-    //     for(int i = 0; i < allmoves.size(); ++i){
-    //         //cout << "Analyzing: " << i << " / " << allmoves.size() << endl;
-    //         int reschild = minimax(depth - 1, alpha, beta, false, allmoves[i]);
-    //         if(reschild > alpha){
-    //             if(beta <= reschild)
-    //                 return make_pair(allmoves[i], reschild);
-    //             alpha = reschild;
-    //             bestfield = allmoves[i];
-    //         }
-    //     }
-    //     return make_pair(bestfield, alpha);
-    // }
-    // else
-    // {
-    //     vector<field> allmoves = possiblemoves(position, false);
-    //     // for(int i = 0; i < allmoves.size(); ++i){
-    //     //     printfield(allmoves[i]);
-    //     // }
-    //     field bestfield = position;
-    //     for(int i = 0; i < allmoves.size(); ++i){
-    //         //cout << "Analyzing: " << i << " / " << allmoves.size() << endl;
-    //         int reschild = minimax(depth - 1, alpha, beta, true, allmoves[i]);
-    //         if(reschild < beta){
-    //             if(reschild <= alpha)
-    //                 return make_pair(allmoves[i], reschild);
-    //             beta = reschild;
-    //             bestfield = allmoves[i];
-    //         }
-    //     }
-    //     return make_pair(bestfield, beta);
-    // }
+int minimaxscout(int depth, int alpha, int beta, bool player, field position){
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].firlink > 3)
-                return make_pair(allmoves[i], 100000);
-        // for(int i = 0; i < allmoves.size(); ++i){
-        //     printfield(allmoves[i]);
-        // }
+                return (16384 * depth);
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
@@ -4342,17 +4306,14 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
                 bestfield = allmoves[i];
             }
         }
-        return make_pair(bestfield, alpha);
+        return alpha;
     }
     else
     {
         vector<field> allmoves = possiblemoves(position, false);
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].seclink > 3)
-                return make_pair(allmoves[i], -100000);
-        // for(int i = 0; i < allmoves.size(); ++i){
-        //     printfield(allmoves[i]);
-        // }
+                return (-16384 * depth);;
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
@@ -4363,6 +4324,60 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         field bestfield = position;
+        for(int i = 0; i < allmoves.size(); ++i){
+            if(beta > scores[i]){
+                beta = scores[i];
+                bestfield = allmoves[i];
+            }
+        }
+        return beta;
+    }
+}
+
+pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field position){
+    if(player){
+        vector<field> allmoves = possiblemoves(position, true);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].firlink > 3)
+                return make_pair(allmoves[i], 100000);
+        field bestfield = allmoves[0];
+        alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
+        allmoves.erase(allmoves.begin());
+        vector<thread> threads(allmoves.size());
+        vector<int> scores(allmoves.size());
+        for(int i = 0; i < allmoves.size(); ++i){
+            threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+                scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i]);
+            });
+        }
+        for(int i = 0; i < allmoves.size(); ++i)
+            threads[i].join();
+        for(int i = 0; i < allmoves.size(); ++i){
+            if(scores[i] > alpha){
+                alpha = scores[i];
+                bestfield = allmoves[i];
+            }
+        }
+        return make_pair(bestfield, alpha);
+    }
+    else
+    {
+        vector<field> allmoves = possiblemoves(position, false);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].seclink > 3)
+                return make_pair(allmoves[i], -100000);
+        field bestfield = allmoves[0];
+        beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
+        allmoves.erase(allmoves.begin());
+        vector<thread> threads(allmoves.size());
+        vector<int> scores(allmoves.size());
+        for(int i = 0; i < allmoves.size(); ++i){
+            threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+                scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i]);
+            });
+        }
+        for(int i = 0; i < allmoves.size(); ++i)
+            threads[i].join();
         for(int i = 0; i < allmoves.size(); ++i){
             if(beta > scores[i]){
                 beta = scores[i];
@@ -4433,6 +4448,7 @@ field aimove(field pos, bool player, int playerseed, int depth){
 }
 
 int main(){
+    //4.54
     //srand(time(NULL));
     field pos;
     // int aiseed = rand() % 70, playerseed = rand() % 70;
@@ -4449,78 +4465,80 @@ int main(){
     //     cout << pos.isboostavailablesec << endl;
     //     printfield(pos);
     // }
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i);
-            pair<field, int> move = minimaxmain(11, -100000, 100000, true, pos);
-            cout << "score: " << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // generatexfield(pos, true, rand() % 70);
-    // generatexfield(pos, false, rand() % 70);
-    // printfield(pos);
-    // cout << endl;
-    // for(;;){
-    //     auto start = high_resolution_clock::now();
-    //     pair<field, int> move = minimaxmain(6, -1000000, 1000000, false, pos);
-    //     auto end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Minimized score: " << move.second << endl;
-    //     pos = move.first; 
-    //     cout << pos.firl << endl;
-    //     cout << pos.firv << endl;
-    //     cout << pos.secl << endl;
-    //     cout << pos.secv << endl;
-    //     cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     for(int i = 0; i < 8; ++i)
-    //         cout << pos.fir[i] << endl;
-    //     for(int i = 0; i < 8; ++i)
-    //         cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.seclink == 4){
-    //         cout << "Player one wins! " << endl;
-    //         printfield(pos);
-    //         break;
+    //ofstream dump("results.txt");
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i);
+    //         pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
+    //         cout << move.second << endl;
+    //         //dump << move.second << endl;
     //     }
-    //     else if(pos.secvirus == 4){
-    //         cout << "Player one loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     start = high_resolution_clock::now();
-    //     move = minimaxmain(12, -1000000, 1000000, true, pos);
-    //     end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Maximized score: " << move.second << endl;
-    //     pos = move.first;
-    //     cout << pos.firl << endl;
-    //     cout << pos.firv << endl;
-    //     cout << pos.secl << endl;
-    //     cout << pos.secv << endl;
-    //     cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     for(int i = 0; i < 8; ++i)
-    //         cout << pos.fir[i] << endl;
-    //     for(int i = 0; i < 8; ++i)
-    //         cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.firlink == 4){
-    //         cout << "Player two wins! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     else if(pos.firvirus == 4){
-    //         cout << "Player two loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     //this_thread::sleep_for(chrono::milliseconds(1000));
     // }
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    generatexfield(pos, true, rand() % 70);
+    generatexfield(pos, false, rand() % 70);
+    printfield(pos);
+    cout << endl;
+    for(;;){
+        auto start = high_resolution_clock::now();
+        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+        auto end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimized score: " << move.second << endl;
+        pos = move.first; 
+        cout << pos.firl << endl;
+        cout << pos.firv << endl;
+        cout << pos.secl << endl;
+        cout << pos.secv << endl;
+        cout << "Boost1: " << pos.isboostavailablefir << endl;
+        cout << "Boost2: " << pos.isboostavailablesec << endl;
+        for(int i = 0; i < 8; ++i)
+            cout << pos.fir[i] << endl;
+        for(int i = 0; i < 8; ++i)
+            cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.seclink == 4){
+            cout << "Player one wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.secvirus == 4){
+            cout << "Player one loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        start = high_resolution_clock::now();
+        move = minimaxmain(12, -1000000, 1000000, true, pos);
+        end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Maximized score: " << move.second << endl;
+        pos = move.first;
+        cout << pos.firl << endl;
+        cout << pos.firv << endl;
+        cout << pos.secl << endl;
+        cout << pos.secv << endl;
+        cout << "Boost1: " << pos.isboostavailablefir << endl;
+        cout << "Boost2: " << pos.isboostavailablesec << endl;
+        for(int i = 0; i < 8; ++i)
+            cout << pos.fir[i] << endl;
+        for(int i = 0; i < 8; ++i)
+            cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.firlink == 4){
+            cout << "Player two wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.firvirus == 4){
+            cout << "Player two loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        //this_thread::sleep_for(chrono::milliseconds(1000));
+    }
 }
