@@ -4374,7 +4374,14 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        sorter(allmoves, scores, true);
+        int max = scores[0], index = 0;
+        for(int i = 1; i < allmoves.size(); ++i){
+            if(scores[i] > max){
+                max = scores[i];
+                index = i;
+            }
+        }
+        swap(allmoves[0], allmoves[index]);
         //auto end = high_resolution_clock::now();
         //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
@@ -4416,7 +4423,14 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        sorter(allmoves, scores, false);
+        int min = scores[0], index = 0;
+        for(int i = 1; i < allmoves.size(); ++i){
+            if(scores[i] < min){
+                min = scores[i];
+                index = i;
+            }
+        }
+        swap(allmoves[0], allmoves[index]);
         //auto end = high_resolution_clock::now();
         //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
