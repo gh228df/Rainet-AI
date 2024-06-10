@@ -2389,10 +2389,12 @@ int minimax(int depth, int alpha, int beta, bool player, field position, unorder
                         return (16384 * depth);
             }
         }
-        int alphabeg = alpha;
+        int alphabeg;
 		ttentry entry;
-		bool isfound = false;
+		bool isfound;
         if(depth > mincachedepth){
+            isfound = false;
+            alphabeg = alpha;
             auto it = cache1.find(position);
             if (it != cache1.end()){
                 entry = it->second;
@@ -3949,10 +3951,12 @@ int minimax(int depth, int alpha, int beta, bool player, field position, unorder
                         return (-16384 * depth);
             }
         }
-        int betabeg = beta;
+        int betabeg;
 		ttentry entry;
-		bool isfound = false;
+		bool isfound;
         if(depth > mincachedepth){
+            isfound = false;
+            betabeg = beta;
             auto it = cache2.find(position);
             if (it != cache2.end()){
                 entry = it->second;
@@ -5429,84 +5433,84 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    // generatexfield(pos, true, 15);
-    // auto start = high_resolution_clock::now();
-    // for(int i = 0; i < 256; ++i){
-    //     if(__builtin_popcount(i) == 4){
-    //         generatexfield(pos, false, i);
-    //         pair<field, int> move = minimaxmain(15, -100000, 100000, true, pos);
-    //         cout << move.second << endl;
-    //         //dump << move.second << endl;
-    //     }
-    // }
-    // auto end = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(end - start).count() << endl;
-    generatexfield(pos, true, rand() % 70);
-    generatexfield(pos, false, rand() % 70);
-    printfield(pos);
-    cout << endl;
-    auto startm = high_resolution_clock::now();
-    for(;;){
-        auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
-        auto end = high_resolution_clock::now();
-        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        cout << "Minimized score: " << move.second << endl;
-        pos = move.first; 
-        // cout << pos.firl << endl;
-        // cout << pos.firv << endl;
-        // cout << pos.secl << endl;
-        // cout << pos.secv << endl;
-        // cout << "Boost1: " << pos.isboostavailablefir << endl;
-        // cout << "Boost2: " << pos.isboostavailablesec << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.fir[i] << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.sec[i] << endl;
-        printfield(pos);
-        cout << endl;
-        if(pos.seclink == 4){
-            cout << "Player one wins! " << endl;
-            printfield(pos);
-            break;
+    generatexfield(pos, true, 15);
+    auto start = high_resolution_clock::now();
+    for(int i = 0; i < 256; ++i){
+        if(__builtin_popcount(i) == 4){
+            generatexfield(pos, false, i);
+            pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
+            cout << move.second << endl;
+            //dump << move.second << endl;
         }
-        else if(pos.secvirus == 4){
-            cout << "Player one loses! " << endl;
-            printfield(pos);
-            break;
-        }
-        start = high_resolution_clock::now();
-        move = minimaxmain(14, -1000000, 1000000, true, pos);
-        end = high_resolution_clock::now();
-        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        cout << "Maximized score: " << move.second << endl;
-        pos = move.first;
-        // cout << pos.firl << endl;
-        // cout << pos.firv << endl;
-        // cout << pos.secl << endl;
-        // cout << pos.secv << endl;
-        // cout << "Boost1: " << pos.isboostavailablefir << endl;
-        // cout << "Boost2: " << pos.isboostavailablesec << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.fir[i] << endl;
-        // for(int i = 0; i < 8; ++i)
-        // //    cout << pos.sec[i] << endl;
-        printfield(pos);
-        cout << endl;
-        if(pos.firlink == 4){
-            cout << "Player two wins! " << endl;
-            printfield(pos);
-            break;
-        }
-        else if(pos.firvirus == 4){
-            cout << "Player two loses! " << endl;
-            printfield(pos);
-            break;
-        }
-        //this_thread::sleep_for(chrono::milliseconds(1000));
     }
-    auto endm = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(endm - startm).count() << endl;
+    auto end = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(end - start).count() << endl;
+    // generatexfield(pos, true, rand() % 70);
+    // generatexfield(pos, false, rand() % 70);
+    // printfield(pos);
+    // cout << endl;
+    // auto startm = high_resolution_clock::now();
+    // for(;;){
+    //     auto start = high_resolution_clock::now();
+    //     pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+    //     auto end = high_resolution_clock::now();
+    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     cout << "Minimized score: " << move.second << endl;
+    //     pos = move.first; 
+    //     // cout << pos.firl << endl;
+    //     // cout << pos.firv << endl;
+    //     // cout << pos.secl << endl;
+    //     // cout << pos.secv << endl;
+    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
+    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.fir[i] << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.sec[i] << endl;
+    //     printfield(pos);
+    //     cout << endl;
+    //     if(pos.seclink == 4){
+    //         cout << "Player one wins! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     else if(pos.secvirus == 4){
+    //         cout << "Player one loses! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     start = high_resolution_clock::now();
+    //     move = minimaxmain(14, -1000000, 1000000, true, pos);
+    //     end = high_resolution_clock::now();
+    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     cout << "Maximized score: " << move.second << endl;
+    //     pos = move.first;
+    //     // cout << pos.firl << endl;
+    //     // cout << pos.firv << endl;
+    //     // cout << pos.secl << endl;
+    //     // cout << pos.secv << endl;
+    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
+    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.fir[i] << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     // //    cout << pos.sec[i] << endl;
+    //     printfield(pos);
+    //     cout << endl;
+    //     if(pos.firlink == 4){
+    //         cout << "Player two wins! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     else if(pos.firvirus == 4){
+    //         cout << "Player two loses! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     //this_thread::sleep_for(chrono::milliseconds(1000));
+    // }
+    // auto endm = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(endm - startm).count() << endl;
     // ifstream getdata("evaluations.txt");
     // int firwin = 0, secwin = 0;
     // for(int i = 0; i < 70; ++i){
