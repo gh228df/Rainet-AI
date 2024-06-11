@@ -16,7 +16,7 @@ int firewallsec = -1; //0b ycoords(3bits) xcoords(3bits)
 struct ttentry{
 	int depth;
 	int score;
-	int flag;
+	bool flag;
 };
 
 struct field{
@@ -58,49 +58,36 @@ struct field{
         return res;
     }
     size_t operator()(const field& s) const {
-        return hash<uint64_t>()(s.firl) ^ (hash<uint64_t>()(s.firv)) ^ hash<uint64_t>()(s.secl) ^ hash<uint64_t>()(s.secv);
+        return hash<uint64_t>()(s.firl | s.firv | s.secl | s.secv);
     }
     bool operator==(const field& other) const {
-        if(firl != other.firl)
-            return false;
-        if(firv != other.firv)
-            return false;
-        if(secl != other.secl)
-            return false;
-        if(secv != other.secv)
-            return false;
-        for(int i = 0; i < 8; ++i)
-            if(fir[i] != other.fir[i] or sec[i] != other.sec[i])
-                return false;
-        if(isboostavailablefir != other.isboostavailablefir)
-            return false;
-        if(isboostavailablesec != other.isboostavailablesec)
-            return false;
-        if(isswapavailablefir != other.isswapavailablefir)
-            return false;
-        if(isswapavailablesec != other.isswapavailablesec)
-            return false;
-        if(ischeckeravailablefir != other.ischeckeravailablefir)
-            return false;
-        if(ischeckeravailablesec != other.ischeckeravailablesec)
-            return false;
-        if(isfirewallavailablefir != other.isfirewallavailablefir)
-            return false;
-        if(isfirewallavailablesec != other.isfirewallavailablesec)
-            return false;
-        if(firvirus != other.firvirus)
-            return false;
-        if(firlink != other.firlink)
-            return false;
-        if(secvirus != other.secvirus)
-            return false;
-        if(seclink != other.seclink)
-            return false;
-        return true;
+        return 
+        firl == other.firl and firv == other.firv and 
+        secl == other.secl and secv == other.secv and 
+        fir[0] == other.fir[0] and sec[0] == other.sec[0] and 
+        fir[1] == other.fir[1] and sec[1] == other.sec[1] and 
+        fir[2] == other.fir[2] and sec[2] == other.sec[2] and 
+        fir[3] == other.fir[3] and sec[3] == other.sec[3] and 
+        fir[4] == other.fir[4] and sec[4] == other.sec[4] and 
+        fir[5] == other.fir[5] and sec[5] == other.sec[5] and 
+        fir[6] == other.fir[6] and sec[6] == other.sec[6] and 
+        fir[7] == other.fir[7] and sec[7] == other.sec[7] and 
+        isboostavailablefir == other.isboostavailablefir and 
+        isboostavailablesec == other.isboostavailablesec and 
+        isswapavailablefir == other.isswapavailablefir and 
+        isswapavailablesec == other.isswapavailablesec and 
+        ischeckeravailablefir == other.ischeckeravailablefir and
+        ischeckeravailablesec == other.ischeckeravailablesec and 
+        isfirewallavailablefir == other.isfirewallavailablefir and
+        isfirewallavailablesec == other.isfirewallavailablesec and 
+        firvirus == other.firvirus and
+        firlink == other.firlink and 
+        secvirus == other.secvirus and
+        seclink == other.seclink;
     }
 };
 
-void generatexfield(field &togenerate, bool player, int x){
+void generatexfield(field &togenerate, const bool player, const int x){
     if(player){
         togenerate.firv = 0;
         togenerate.firl = 0;
@@ -330,7 +317,7 @@ void printfield(field todisplay){
     cout << "Virus: " << todisplay.secvirus << "         Link: " << todisplay.seclink << endl;
 }
 
-vector<field> possiblemoves(field position, bool player){
+vector<field> possiblemoves(const field &position, const bool player){
     vector<field> nplusone;
     nplusone.reserve(100);
     uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
@@ -2217,9 +2204,9 @@ vector<field> possiblemoves(field position, bool player){
 //     return true;
 // }
 
-const int mincachedepth = 0;
+const int mincachedepth = 1;
 
-int minimax(int depth, int alpha, int beta, bool player, field position, unordered_map<field, ttentry, field> &cache1, unordered_map<field, ttentry, field> &cache2){
+int minimax(int depth, int alpha, int beta, const bool player, field &position, unordered_map<field, ttentry, field> &cache1, unordered_map<field, ttentry, field> &cache2){
     uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
     if(player){
         if(depth == 0)
@@ -5149,7 +5136,7 @@ int minimax(int depth, int alpha, int beta, bool player, field position, unorder
     }
 }
 
-int minimaxscout(int depth, int alpha, int beta, bool player, field position){
+int minimaxscout(const int depth, int alpha, int beta, const bool player, const field &position){
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5163,7 +5150,7 @@ int minimaxscout(int depth, int alpha, int beta, bool player, field position){
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
-            threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache1, newcache2);
@@ -5192,7 +5179,7 @@ int minimaxscout(int depth, int alpha, int beta, bool player, field position){
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i], newcache1, newcache2);
@@ -5209,29 +5196,7 @@ int minimaxscout(int depth, int alpha, int beta, bool player, field position){
     }
 }
 
-bool cmp(int fir, int sec, bool bv){
-	if(bv)
-		return fir < sec;
-	return sec > fir;
-}
-
-void sorter(vector<field> &positions, vector<int> &scores, bool bv){
-	for(int i = 0; i < scores.size() - 1; ++i){
-		int t = -1;
-		for(int u = 0; u < scores.size() - 1 - i; ++u){
-			if(cmp(scores[u], scores[u + 1], bv)){
-				t = scores[u];
-				scores[u] = scores[u + 1];
-				scores[u + 1] = t;
-				swap(positions[u], positions[u + 1]);
-			}	
-		}
-		if(t == -1)
-			return;
-	}
-}
-
-pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field position){
+pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool player, const field position){
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5246,7 +5211,7 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache1, newcache2);
@@ -5269,11 +5234,11 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
         //end = high_resolution_clock::now();
         //cout << "Predicted alpha time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        allmoves.erase(allmoves.begin());
-        threads.erase(threads.begin());
-        scores.erase(scores.begin());
+        // allmoves.erase(allmoves.begin());
+        // threads.erase(threads.begin());
+        // scores.erase(scores.begin());
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache1, newcache2);
@@ -5304,7 +5269,7 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache1, newcache2);
@@ -5332,7 +5297,7 @@ pair<field, int> minimaxmain(int depth, int alpha, int beta, bool player, field 
         threads.erase(threads.begin());
         scores.erase(scores.begin());
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 unordered_map<field, ttentry, field> newcache1;
 			    unordered_map<field, ttentry, field> newcache2;
                 scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i], newcache1, newcache2);
@@ -5433,82 +5398,82 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i);
-            pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
-            cout << move.second << endl;
-            //dump << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // generatexfield(pos, true, rand() % 70);
-    // generatexfield(pos, false, rand() % 70);
-    // printfield(pos);
-    // cout << endl;
-    // auto startm = high_resolution_clock::now();
-    // for(;;){
-    //     auto start = high_resolution_clock::now();
-    //     pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
-    //     auto end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Minimized score: " << move.second << endl;
-    //     pos = move.first; 
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.seclink == 4){
-    //         cout << "Player one wins! " << endl;
-    //         printfield(pos);
-    //         break;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i);
+    //         pair<field, int> move = minimaxmain(16, -100000, 100000, true, pos);
+    //         cout << move.second << endl;
+    //         //dump << move.second << endl;
     //     }
-    //     else if(pos.secvirus == 4){
-    //         cout << "Player one loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     start = high_resolution_clock::now();
-    //     move = minimaxmain(14, -1000000, 1000000, true, pos);
-    //     end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Maximized score: " << move.second << endl;
-    //     pos = move.first;
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     // //    cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.firlink == 4){
-    //         cout << "Player two wins! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     else if(pos.firvirus == 4){
-    //         cout << "Player two loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     //this_thread::sleep_for(chrono::milliseconds(1000));
     // }
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    generatexfield(pos, true, rand() % 70);
+    generatexfield(pos, false, rand() % 70);
+    printfield(pos);
+    cout << endl;
+    // auto startm = high_resolution_clock::now();
+    for(;;){
+        auto start = high_resolution_clock::now();
+        pair<field, int> move = minimaxmain(14, -1000000, 1000000, false, pos);
+        auto end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimized score: " << move.second << endl;
+        pos = move.first; 
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.seclink == 4){
+            cout << "Player one wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.secvirus == 4){
+            cout << "Player one loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        start = high_resolution_clock::now();
+        move = minimaxmain(14, -1000000, 1000000, true, pos);
+        end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Maximized score: " << move.second << endl;
+        pos = move.first;
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        // //    cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.firlink == 4){
+            cout << "Player two wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.firvirus == 4){
+            cout << "Player two loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        //this_thread::sleep_for(chrono::milliseconds(1000));
+    }
     // auto endm = high_resolution_clock::now();
     // cout << duration_cast<milliseconds>(endm - startm).count() << endl;
     // ifstream getdata("evaluations.txt");
