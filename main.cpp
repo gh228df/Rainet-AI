@@ -2600,7 +2600,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -2612,7 +2612,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                            reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
                             if(beta <= reschild)
                                 return reschild;
@@ -2667,7 +2667,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -2679,7 +2679,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                            reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
                             if(beta <= reschild)
                                 return reschild;
@@ -2735,7 +2735,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -2745,14 +2745,6 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                     else
                     {
-                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
-                        if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temp, cache);
-                        if(reschild > alpha){
-                            if(beta <= reschild)
-                                return reschild;
-                            alpha = reschild;
-                        }
                         ++t4;
                         if(t < 6 and (firmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -2800,7 +2792,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
-                                        reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                        reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
                                         if(beta <= reschild)
                                             return reschild;
@@ -2812,13 +2804,21 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             {
                                 int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                 if(reschild > alpha and reschild < beta)
-                                    reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                    reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
                                     if(beta <= reschild)
                                         return reschild;
                                     alpha = reschild;
                                 }
                             }
+                        }
+                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
+                        if(reschild > alpha){
+                            if(beta <= reschild)
+                                return reschild;
+                            alpha = reschild;
                         }
                     }
                 }
@@ -2869,7 +2869,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -2879,14 +2879,6 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                     else
                     {
-                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
-                        if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temp, cache);
-                        if(reschild > alpha){
-                            if(beta <= reschild)
-                                return reschild;
-                            alpha = reschild;
-                        }
                         --t4;
                         if(t > 1 and (firmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -2934,7 +2926,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
-                                        reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                        reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
                                         if(beta <= reschild)
                                             return reschild;
@@ -2946,13 +2938,21 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             {
                                 int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                 if(reschild > alpha and reschild < beta)
-                                    reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                    reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
                                     if(beta <= reschild)
                                         return reschild;
                                     alpha = reschild;
                                 }
                             }
+                        }
+                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
+                        if(reschild > alpha){
+                            if(beta <= reschild)
+                                return reschild;
+                            alpha = reschild;
                         }
                     }
                 }
@@ -3003,7 +3003,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -3015,7 +3015,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                            reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
                             if(beta <= reschild)
                                 return reschild;
@@ -3070,7 +3070,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -3082,7 +3082,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                            reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
                             if(beta <= reschild)
                                 return reschild;
@@ -3137,7 +3137,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, false, temp, cache);
+                                reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
                                 if(beta <= reschild)
                                     return reschild;
@@ -3147,14 +3147,6 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                     else
                     {
-                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
-                        if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, false, temp, cache);
-                        if(reschild > alpha){
-                            if(beta <= reschild)
-                                return reschild;
-                            alpha = reschild;
-                        }
                         t4 += 8;
                         if(t2 < 48 and (firmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -3202,7 +3194,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
-                                        reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                        reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
                                         if(beta <= reschild)
                                             return reschild;
@@ -3214,13 +3206,21 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             {
                                 int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                 if(reschild > alpha and reschild < beta)
-                                    reschild = minimax(depth, alpha, beta, false, temptemp, cache);
+                                    reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
                                     if(beta <= reschild)
                                         return reschild;
                                     alpha = reschild;
                                 }
                             }
+                        }
+                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
+                        if(reschild > alpha){
+                            if(beta <= reschild)
+                                return reschild;
+                            alpha = reschild;
                         }
                     }
                 }
@@ -4127,6 +4127,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temptemp.secvirus < 3)
                         {
@@ -4141,13 +4147,26 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
-                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                    else
+                    {
+                        int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 + 7;
@@ -4175,6 +4194,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temptemp.secvirus < 3)
                         {
@@ -4189,13 +4214,26 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
-                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                    else
+                    {
+                        int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 + 1;
@@ -4223,6 +4261,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temp.secvirus < 3)
                         {
@@ -4237,6 +4281,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
                     else
@@ -4266,6 +4318,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                                    if(beta > reschild){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                                 else if(temptemp.secvirus < 3)
                                 {
@@ -4280,21 +4338,36 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                    if(reschild > alpha and reschild < beta)
+                                        reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                    if(reschild < beta){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                             }
-                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                            if(beta > reschild){
-                                if(reschild <= alpha)
-                                    return reschild;
-                                beta = reschild;
+                            else
+                            {
+                                int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                if(reschild > alpha and reschild < beta)
+                                    reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                if(reschild < beta){
+                                    if(reschild <= alpha)
+                                        return reschild;
+                                    beta = reschild;
+                                }
                             }
                         }
-                    }
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                        int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 - 1;
@@ -4322,6 +4395,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temp.secvirus < 3)
                         {
@@ -4336,6 +4415,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
                     else
@@ -4365,6 +4452,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                                    if(beta > reschild){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                                 else if(temptemp.secvirus < 3)
                                 {
@@ -4379,21 +4472,36 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                    if(reschild > alpha and reschild < beta)
+                                        reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                    if(reschild < beta){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                             }
-                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                            if(beta > reschild){
-                                if(reschild <= alpha)
-                                    return reschild;
-                                beta = reschild;
+                            else
+                            {
+                                int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                if(reschild > alpha and reschild < beta)
+                                    reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                if(reschild < beta){
+                                    if(reschild <= alpha)
+                                        return reschild;
+                                    beta = reschild;
+                                }
                             }
                         }
-                    }
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                        int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 - 7;
@@ -4421,6 +4529,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temptemp.secvirus < 3)
                         {
@@ -4435,13 +4549,26 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
-                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                    else
+                    {
+                        int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 - 9;
@@ -4469,6 +4596,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temptemp.secvirus < 3)
                         {
@@ -4483,13 +4616,26 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
-                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                    else
+                    {
+                        int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 - 8;
@@ -4517,6 +4663,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temp.secvirus < 3)
                         {
@@ -4531,6 +4683,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                            if(reschild > alpha and reschild < beta)
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                            if(reschild < beta){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
                     else
@@ -4560,6 +4720,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
+                                    if(beta > reschild){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                                 else if(temptemp.secvirus < 3)
                                 {
@@ -4574,21 +4740,36 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                    if(reschild > alpha and reschild < beta)
+                                        reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                    if(reschild < beta){
+                                        if(reschild <= alpha)
+                                            return reschild;
+                                        beta = reschild;
+                                    }
                                 }
                             }
-                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
-                            if(beta > reschild){
-                                if(reschild <= alpha)
-                                    return reschild;
-                                beta = reschild;
+                            else
+                            {
+                                int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
+                                if(reschild > alpha and reschild < beta)
+                                    reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
+                                if(reschild < beta){
+                                    if(reschild <= alpha)
+                                        return reschild;
+                                    beta = reschild;
+                                }
                             }
                         }
-                    }
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                        int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
             }
@@ -4639,7 +4820,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4651,7 +4832,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -4700,7 +4881,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4712,7 +4893,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -4761,7 +4942,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4773,7 +4954,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -4822,7 +5003,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4834,7 +5015,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -4890,7 +5071,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4902,7 +5083,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -4951,7 +5132,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -4963,7 +5144,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -5012,7 +5193,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -5024,7 +5205,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -5073,7 +5254,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 }
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
-                                reschild = minimax(depth, alpha, beta, true, temp, cache);
+                                reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
                                 if(reschild <= alpha)
                                     return reschild;
@@ -5085,7 +5266,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     {
                         int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                         if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
                             if(reschild <= alpha)
                                 return reschild;
@@ -5201,9 +5382,9 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
         //end = high_resolution_clock::now();
         //cout << "Predicted alpha time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        // allmoves.erase(allmoves.begin());
-        // threads.erase(threads.begin());
-        // scores.erase(scores.begin());
+        allmoves.erase(allmoves.begin());
+        threads.erase(threads.begin());
+        scores.erase(scores.begin());
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
@@ -5219,6 +5400,26 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         return make_pair(bestfield, alpha);
+        // vector<field> allmoves = possiblemoves(position, true);
+        // for(int i = 0; i < allmoves.size(); ++i)
+        //     if(allmoves[i].firlink > 3)
+        //         return make_pair(allmoves[i], 100000);
+        // for(int i = 0; i < allmoves.size();)
+        //     if(allmoves[i].firvirus > 3)
+        //         allmoves.erase(allmoves.begin() + i);
+        //     else
+        //         ++i;
+        // field bestfield = allmoves[0];
+        // vector<unordered_map<field, ttentry, field>> newcache(depth);
+        // for(int i = 0; i < allmoves.size(); ++i){
+        //     cout << i << " / " << allmoves.size() << endl;
+        //     int reschild = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache);
+        //     if(reschild > alpha){
+        //         alpha = reschild;
+        //         bestfield = allmoves[i];
+        //     }
+        // }
+        // return make_pair(bestfield, alpha);
     }
     else
     {
@@ -5362,87 +5563,84 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i); 
-            pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
-            cout << move.second << endl;
-            //dump << move.second << endl;
-            // auto end = high_resolution_clock::now();
-            // cout << duration_cast<milliseconds>(end - start).count() << endl;
-            // return 0;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // generatexfield(pos, true, rand() % 70);
-    // generatexfield(pos, false, rand() % 70);
-    // printfield(pos);
-    // cout << endl;
-    // // auto startm = high_resolution_clock::now();
-    // for(;;){
-    //     auto start = high_resolution_clock::now();
-    //     pair<field, int> move = minimaxmain(8, -1000000, 1000000, false, pos);
-    //     auto end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Minimized score: " << move.second << endl;
-    //     pos = move.first; 
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.seclink == 4){
-    //         cout << "Player one wins! " << endl;
-    //         printfield(pos);
-    //         break;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i); 
+    //         pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
+    //         cout << move.second << endl;
+    //         //dump << move.second << endl;
     //     }
-    //     else if(pos.secvirus == 4){
-    //         cout << "Player one loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     start = high_resolution_clock::now();
-    //     move = minimaxmain(12, -1000000, 1000000, true, pos);
-    //     end = high_resolution_clock::now();
-    //     cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Maximized score: " << move.second << endl;
-    //     pos = move.first;
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     // //    cout << pos.sec[i] << endl;
-    //     printfield(pos);
-    //     cout << endl;
-    //     if(pos.firlink == 4){
-    //         cout << "Player two wins! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     else if(pos.firvirus == 4){
-    //         cout << "Player two loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     //this_thread::sleep_for(chrono::milliseconds(1000));
     // }
-    // auto endm = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(endm - startm).count() << endl;
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    generatexfield(pos, true, rand() % 70);
+    generatexfield(pos, false, rand() % 70);
+    printfield(pos);
+    cout << endl;
+    auto startm = high_resolution_clock::now();
+    for(;;){
+        auto start = high_resolution_clock::now();
+        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+        auto end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimized score: " << move.second << endl;
+        pos = move.first; 
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.seclink == 4){
+            cout << "Player one wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.secvirus == 4){
+            cout << "Player one loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        start = high_resolution_clock::now();
+        move = minimaxmain(12, -1000000, 1000000, true, pos);
+        end = high_resolution_clock::now();
+        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Maximized score: " << move.second << endl;
+        pos = move.first;
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        // //    cout << pos.sec[i] << endl;
+        printfield(pos);
+        cout << endl;
+        if(pos.firlink == 4){
+            cout << "Player two wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.firvirus == 4){
+            cout << "Player two loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        //this_thread::sleep_for(chrono::milliseconds(1000));
+    }
+    auto endm = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(endm - startm).count() << endl;
     // ifstream getdata("evaluations.txt");
     // int firwin = 0, secwin = 0;
     // for(int i = 0; i < 70; ++i){
