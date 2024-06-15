@@ -5287,6 +5287,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
     }
 }
 
+void displayProgressBar(const double total, const double finished, const string& text) {
+    cout << "\33[2K\r" << flush;
+    cout << text << " " << int(finished * 100.0/ total) << " %\r" << flush;
+}
+
 int minimaxscout(const int depth, int alpha, int beta, const bool player, const field &position){
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
@@ -5300,12 +5305,16 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, const 
                 ++i;
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
+        int finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2/3 ");
             });
         }
+        cout << "\33[2K\r" << flush;
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5328,10 +5337,13 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, const 
                 ++i;
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
+        int finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5359,10 +5371,13 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         //auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
+        int finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5385,10 +5400,13 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
+        finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5400,26 +5418,6 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         return make_pair(bestfield, alpha);
-        // vector<field> allmoves = possiblemoves(position, true);
-        // for(int i = 0; i < allmoves.size(); ++i)
-        //     if(allmoves[i].firlink > 3)
-        //         return make_pair(allmoves[i], 100000);
-        // for(int i = 0; i < allmoves.size();)
-        //     if(allmoves[i].firvirus > 3)
-        //         allmoves.erase(allmoves.begin() + i);
-        //     else
-        //         ++i;
-        // field bestfield = allmoves[0];
-        // vector<unordered_map<field, ttentry, field>> newcache(depth);
-        // for(int i = 0; i < allmoves.size(); ++i){
-        //     cout << i << " / " << allmoves.size() << endl;
-        //     int reschild = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache);
-        //     if(reschild > alpha){
-        //         alpha = reschild;
-        //         bestfield = allmoves[i];
-        //     }
-        // }
-        // return make_pair(bestfield, alpha);
     }
     else
     {
@@ -5435,10 +5433,13 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         //auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
+        int finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5462,10 +5463,13 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
+        finished = 0;
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]() {
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5568,7 +5572,8 @@ int main(){
     // for(int i = 0; i < 256; ++i){
     //     if(__builtin_popcount(i) == 4){
     //         generatexfield(pos, false, i); 
-    //         pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
+    //         pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+    //         cout << "\33[2K\r" << flush;
     //         cout << move.second << endl;
     //         //dump << move.second << endl;
     //     }
@@ -5582,8 +5587,9 @@ int main(){
     auto startm = high_resolution_clock::now();
     for(;;){
         auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+        pair<field, int> move = minimaxmain(15, -1000000, 1000000, false, pos);
         auto end = high_resolution_clock::now();
+        cout << "\33[2K\r" << flush;
         cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Minimized score: " << move.second << endl;
         pos = move.first; 
@@ -5610,8 +5616,9 @@ int main(){
             break;
         }
         start = high_resolution_clock::now();
-        move = minimaxmain(12, -1000000, 1000000, true, pos);
+        move = minimaxmain(15, -1000000, 1000000, true, pos);
         end = high_resolution_clock::now();
+        cout << "\33[2K\r" << flush;
         cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Maximized score: " << move.second << endl;
         pos = move.first;
@@ -5619,7 +5626,7 @@ int main(){
         // cout << pos.firv << endl;
         // cout << pos.secl << endl;
         // cout << pos.secv << endl;
-        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;*+
         // cout << "Boost2: " << pos.isboostavailablesec << endl;
         // for(int i = 0; i < 8; ++i)
         //     cout << pos.fir[i] << endl;
