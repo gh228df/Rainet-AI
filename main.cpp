@@ -317,9 +317,9 @@ void printfield(field todisplay){
 }
 
 vector<field> possiblemoves(const field &position, const bool player){
+    const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
     vector<field> nplusone;
     nplusone.reserve(100);
-    uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
     if(player){
         for(int i = 0; i < position.firlinkindex; ++i){
             const int t2 = (position.fir[i] & 63);
@@ -353,6 +353,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                 nplusone.push_back(temp);
             }
         }
+        const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
         if(firewallsec < 0){
             int startlink = 0, startvirus = 4;
             if(position.isboostavailablefir == false){
@@ -397,8 +398,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
                             temp.secv = (temp.secv xor (1ULL << (t4)));
@@ -411,6 +413,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
@@ -440,8 +443,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.seclinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
                                     temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -454,12 +458,14 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.secvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                                nplusone.push_back(temptemp);
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 - 7;
                 if(t2 > 7 and (firmask & (1ULL << (t4))) == 0 and t < 7){
@@ -486,8 +492,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
                             temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -500,9 +507,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 - 9;
                 if(t2 > 7 and (firmask & (1ULL << (t4))) == 0 and t > 0){
@@ -529,8 +540,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
                             temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -543,9 +555,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 + 1;
                 if(t < 7 and (firmask & (1ULL << (t4))) == 0){
@@ -572,8 +588,10 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
+                            
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
                             temp.secv = (temp.secv xor (1ULL << (t4)));
@@ -586,6 +604,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
@@ -615,8 +634,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.seclinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
                                     temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -629,12 +649,16 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.secvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 - 1;
                 if(t > 0 and (firmask & (1ULL << (t4))) == 0){
@@ -661,8 +685,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
                             temp.secv = (temp.secv xor (1ULL << (t4)));
@@ -675,6 +700,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
@@ -704,8 +730,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.seclinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
                                     temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -718,12 +745,16 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.secvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 + 9;
                 if(t2 < 56 and (firmask & (1ULL << (t4))) == 0 and t < 7){
@@ -750,8 +781,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
                             temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -764,9 +796,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 + 7;
                 if(t2 < 56 and (firmask & (1ULL << (t4))) == 0 and t > 0){
@@ -793,8 +829,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
                             temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -807,9 +844,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.sec[temptemp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 + 8;
                 if(t2 < 56 and (firmask & (1ULL << (t4))) == 0){
@@ -836,8 +877,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
                             temp.secv = (temp.secv xor (1ULL << (t4)));
@@ -850,10 +892,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
                     {
+                        nplusone.push_back(temp);
                         t4 += 8;
                         if(t2 < 48 and (firmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -879,8 +923,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.seclinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
                                     temptemp.secv = (temptemp.secv xor (1ULL << (t4)));
@@ -893,12 +938,15 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.sec[temptemp.secvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
                     }
-                    nplusone.push_back(temp);
                 }
             }
             for(int i = startvirus; i < position.firvirusindex; ++i){
@@ -906,154 +954,182 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firv = (nmove.firv xor (1ULL << t2));
+                nmove.firv &= ~(1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i] -= 8;
-                    temp.firv = (temp.firv xor shiftconst);
+                    temp.firv |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl = (temp.secl xor shiftconst);
+                            temp.secl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.seclinkindex;
-                                    temp.sec[l] = temp.sec[temp.seclinkindex];
+                                    if(l < temp.seclinkindex)
+                                        temp.sec[l] = temp.sec[temp.seclinkindex];
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv = (temp.secv xor shiftconst);
+                            temp.secv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.secvirusindex;
-                                    temp.sec[l] = temp.sec[temp.secvirusindex];
+                                    if(l < temp.secvirusindex)
+                                        temp.sec[l] = temp.sec[temp.secvirusindex];
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 += 9; //t2 + 1
                 shiftconst = (1ULL << t4);
                 if(t < 7 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i]++;
-                    temp.firv = (temp.firv xor shiftconst);
+                    temp.firv |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl = (temp.secl xor shiftconst);
+                            temp.secl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.seclinkindex;
-                                    temp.sec[l] = temp.sec[temp.seclinkindex];
+                                    if(l < temp.seclinkindex)
+                                        temp.sec[l] = temp.sec[temp.seclinkindex];
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv = (temp.secv xor shiftconst);
+                            temp.secv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.secvirusindex;
-                                    temp.sec[l] = temp.sec[temp.secvirusindex];
+                                    if(l < temp.secvirusindex)
+                                        temp.sec[l] = temp.sec[temp.secvirusindex];
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 2; //t2 - 1
                 shiftconst = (1ULL << t4);
                 if(t > 0 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i]--;
-                    temp.firv = (temp.firv xor shiftconst);
+                    temp.firv |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl = (temp.secl xor shiftconst);
+                            temp.secl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.seclinkindex;
-                                    temp.sec[l] = temp.sec[temp.seclinkindex];
+                                    if(l < temp.seclinkindex)
+                                        temp.sec[l] = temp.sec[temp.seclinkindex];
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv = (temp.secv xor shiftconst);
+                            temp.secv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.secvirusindex;
-                                    temp.sec[l] = temp.sec[temp.secvirusindex];
+                                    if(l < temp.secvirusindex)
+                                        temp.sec[l] = temp.sec[temp.secvirusindex];
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 += 9; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i] += 8;
-                    temp.firv = (temp.firv xor shiftconst);
+                    temp.firv |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl = (temp.secl xor shiftconst);
+                            temp.secl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.seclinkindex;
-                                    temp.sec[l] = temp.sec[temp.seclinkindex];
+                                    if(l < temp.seclinkindex)
+                                        temp.sec[l] = temp.sec[temp.seclinkindex];
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv = (temp.secv xor shiftconst);
+                            temp.secv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.secvirusindex;
-                                    temp.sec[l] = temp.sec[temp.secvirusindex];
+                                    if(l < temp.secvirusindex)
+                                        temp.sec[l] = temp.sec[temp.secvirusindex];
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
             }
             for(int i = startlink; i < position.firlinkindex; ++i){
@@ -1061,161 +1137,185 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firl = (nmove.firl xor (1ULL << t2));
+                nmove.firl &= ~(1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i] -= 8;
-                    temp.firl = (temp.firl xor shiftconst);
+                    temp.firl |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl = (temp.secl xor shiftconst);
+                            temp.secl &= ~(shiftconst);
                             for(int l = 0;; ++l){
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.seclinkindex;
-                                    temp.sec[l] = temp.sec[temp.seclinkindex];
+                                    if(l < temp.seclinkindex)
+                                        temp.sec[l] = temp.sec[temp.seclinkindex];
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
                             }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv = (temp.secv xor shiftconst);
+                            temp.secv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
                                         temp.isboostavailablesec = true;
                                     --temp.secvirusindex;
-                                    temp.sec[l] = temp.sec[temp.secvirusindex];
+                                    if(l < temp.secvirusindex)
+                                        temp.sec[l] = temp.sec[temp.secvirusindex];
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 += 9; //t2 + 1
                 shiftconst = (1ULL << t4);
                 if(t < 7 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i]++;
-                    temp.firl = (temp.firl xor shiftconst);
+                    temp.firl |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
-                                ++temp.firlink;
-                                temp.secl = (temp.secl xor shiftconst);
-                                for(int l = 0;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.seclinkindex;
+                            ++temp.firlink;
+                            temp.secl &= ~(shiftconst);
+                            for(int l = 0;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.seclinkindex;
+                                    if(l < temp.seclinkindex)
                                         temp.sec[l] = temp.sec[temp.seclinkindex];
-                                        temp.sec[temp.seclinkindex] = 0;
-                                        break;
-                                    }
-                            }
-                            else
-                            {
-                                ++temp.firvirus;
-                                temp.secv = (temp.secv xor shiftconst);
-                                for(int l = 4;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.secvirusindex;
+                                    temp.sec[temp.seclinkindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
+                        else if(temp.firvirus < 3)
+                        {
+                            ++temp.firvirus;
+                            temp.secv &= ~(shiftconst);
+                            for(int l = 4;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.secvirusindex;
+                                    if(l < temp.secvirusindex)
                                         temp.sec[l] = temp.sec[temp.secvirusindex];
-                                        temp.sec[temp.secvirusindex] = 0;
-                                        break;
-                                    }
-                            }
+                                    temp.sec[temp.secvirusindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 2; //t2 - 1
                 shiftconst = (1ULL << t4);
                 if(t > 0 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i]--;
-                    temp.firl = (temp.firl xor shiftconst);
+                    temp.firl |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
-                                ++temp.firlink;
-                                temp.secl = (temp.secl xor shiftconst);
-                                for(int l = 0;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.seclinkindex;
+                            ++temp.firlink;
+                            temp.secl &= ~(shiftconst);
+                            for(int l = 0;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.seclinkindex;
+                                    if(l < temp.seclinkindex)
                                         temp.sec[l] = temp.sec[temp.seclinkindex];
-                                        temp.sec[temp.seclinkindex] = 0;
-                                        break;
-                                    }
-                            }
-                            else
-                            {
-                                ++temp.firvirus;
-                                temp.secv = (temp.secv xor shiftconst);
-                                for(int l = 4;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.secvirusindex;
+                                    temp.sec[temp.seclinkindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
+                        else if(temp.firvirus < 3)
+                        {
+                            ++temp.firvirus;
+                            temp.secv &= ~(shiftconst);
+                            for(int l = 4;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.secvirusindex;
+                                    if(l < temp.secvirusindex)
                                         temp.sec[l] = temp.sec[temp.secvirusindex];
-                                        temp.sec[temp.secvirusindex] = 0;
-                                        break;
-                                    }
-                            }
+                                    temp.sec[temp.secvirusindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 += 9; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (firmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.fir[i] += 8;
-                    temp.firl = (temp.firl xor shiftconst);
+                    temp.firl |= shiftconst;
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
-                                ++temp.firlink;
-                                temp.secl = (temp.secl xor shiftconst);
-                                for(int l = 0;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.seclinkindex;
+                            ++temp.firlink;
+                            temp.secl &= ~(shiftconst);
+                            for(int l = 0;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.seclinkindex;
+                                    if(l < temp.seclinkindex)
                                         temp.sec[l] = temp.sec[temp.seclinkindex];
-                                        temp.sec[temp.seclinkindex] = 0;
-                                        break;
-                                    }
-                            }
-                            else
-                            {
-                                ++temp.firvirus;
-                                temp.secv = (temp.secv xor shiftconst);
-                                for(int l = 4;; ++l)
-                                    if((temp.sec[l] & 63) == t4){
-                                        if(temp.sec[l] & 64)
-                                            temp.isboostavailablesec = true;
-                                        --temp.secvirusindex;
+                                    temp.sec[temp.seclinkindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
+                        else if(temp.firvirus < 3)
+                        {
+                            ++temp.firvirus;
+                            temp.secv &= ~(shiftconst);
+                            for(int l = 4;; ++l)
+                                if((temp.sec[l] & 63) == t4){
+                                    if(temp.sec[l] & 64)
+                                        temp.isboostavailablesec = true;
+                                    --temp.secvirusindex;
+                                    if(l < temp.secvirusindex)
                                         temp.sec[l] = temp.sec[temp.secvirusindex];
-                                        temp.sec[temp.secvirusindex] = 0;
-                                        break;
-                                    }
-                            }
+                                    temp.sec[temp.secvirusindex] = 0;
+                                    break;
+                                }
+                            nplusone.push_back(temp);
+                        }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
             }
-        }
-        else
-        {
-            //todo
         }
     }
     else
@@ -1296,8 +1396,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
                             temp.firv = (temp.firv xor (1ULL << (t4)));
@@ -1310,12 +1411,14 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
                     {
                         t4 += 8;
                         if(t3 < 48 and (secmask & (1ULL << (t4))) == 0){
+                            
                             field temptemp = nmove;
                             if(i == 0){
                                 temptemp.sec[i] += 16;
@@ -1339,8 +1442,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
                                     temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1353,12 +1457,14 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                                nplusone.push_back(temptemp);
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 + 9;
                 if(t3 < 56 and (secmask & (1ULL << (t4))) == 0 and t < 7){
@@ -1385,8 +1491,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
                             temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1399,9 +1506,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 + 7;
                 if(t3 < 56 and (secmask & (1ULL << (t4))) == 0 and t > 0){
@@ -1428,8 +1539,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
                             temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1442,9 +1554,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 + 1;
                 if(t < 7 and (secmask & (1ULL << (t4))) == 0){
@@ -1471,8 +1587,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
                             temp.firv = (temp.firv xor (1ULL << (t4)));
@@ -1485,6 +1602,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
@@ -1514,8 +1632,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
                                     temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1528,12 +1647,16 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 - 1;
                 if(t > 0 and (secmask & (1ULL << (t4))) == 0){
@@ -1560,8 +1683,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
                             temp.firv = (temp.firv xor (1ULL << (t4)));
@@ -1574,6 +1698,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
@@ -1603,8 +1728,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
                                     temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1617,12 +1743,16 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
+                        nplusone.push_back(temp);
                     }
-                    nplusone.push_back(temp);
                 }
                 t4 = t2 - 7;
                 if(t3 > 7 and (secmask & (1ULL << (t4))) == 0 and t < 7){
@@ -1649,8 +1779,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
                             temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1663,9 +1794,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 - 9;
                 if(t3 > 7 and (secmask & (1ULL << (t4))) == 0 and t > 0){
@@ -1692,8 +1827,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
-                        else
+                        else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
                             temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1706,9 +1842,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temptemp.fir[temptemp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temptemp);
                         }
                     }
-                    nplusone.push_back(temptemp);
+                    else
+                    {
+                        nplusone.push_back(temptemp);
+                    }
                 }
                 t4 = t2 - 8;
                 if(t3 > 7 and (secmask & (1ULL << (t4))) == 0){
@@ -1735,8 +1875,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
                             temp.firv = (temp.firv xor (1ULL << (t4)));
@@ -1749,10 +1890,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
                     else
                     {
+                        nplusone.push_back(temp);
                         t4 -= 8;
                         if(t3 > 15 and (secmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -1778,8 +1921,9 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firlinkindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
-                                else
+                                else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
                                     temptemp.firv = (temptemp.firv xor (1ULL << (t4)));
@@ -1792,12 +1936,15 @@ vector<field> possiblemoves(const field &position, const bool player){
                                             temptemp.fir[temptemp.firvirusindex] = 0;
                                             break;
                                         }
+                                    nplusone.push_back(temptemp);
                                 }
                             }
-                            nplusone.push_back(temptemp);
+                            else
+                            {
+                                nplusone.push_back(temptemp);
+                            }
                         }
                     }
-                    nplusone.push_back(temp);
                 }
             }
             for(int i = startvirus; i < position.secvirusindex; ++i){
@@ -1805,17 +1952,17 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secv = (nmove.secv xor (1ULL << t2));
+                nmove.secv &= ~(1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i] += 8;
-                    temp.secv = (temp.secv xor shiftconst);
+                    temp.secv |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1825,11 +1972,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1839,20 +1987,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 7; //t2 + 1
                 shiftconst = (1ULL << t4);
                 if(t < 7 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i]++;
-                    temp.secv = (temp.secv xor shiftconst);
+                    temp.secv |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1862,11 +2014,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1876,20 +2029,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 2; //t2 - 1
                 shiftconst = (1ULL << t4);
                 if(t > 0 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i]--;
-                    temp.secv = (temp.secv xor shiftconst);
+                    temp.secv |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1899,11 +2056,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1913,20 +2071,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 7; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i] -= 8;
-                    temp.secv = (temp.secv xor shiftconst);
+                    temp.secv |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1936,11 +2098,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1950,9 +2113,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
             }
             for(int i = startlink; i < position.seclinkindex; ++i){
@@ -1960,17 +2127,17 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secl = (nmove.secl xor (1ULL << t2));
+                nmove.secl &= ~(1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i] += 8;
-                    temp.secl = (temp.secl xor shiftconst);
+                    temp.secl |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1980,11 +2147,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -1994,20 +2162,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 7; //t2 + 1
                 shiftconst = (1ULL << t4);
                 if(t < 7 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i]++;
-                    temp.secl = (temp.secl xor shiftconst);
+                    temp.secl |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2017,11 +2189,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2031,20 +2204,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 2; //t2 - 1
                 shiftconst = (1ULL << t4);
                 if(t > 0 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i]--;
-                    temp.secl = (temp.secl xor shiftconst);
+                    temp.secl |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2054,11 +2231,12 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2068,20 +2246,24 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
                 }
                 t4 -= 7; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (secmask & shiftconst) == 0){
                     field temp = nmove;
                     temp.sec[i] -= 8;
-                    temp.secl = (temp.secl xor shiftconst);
+                    temp.secl |= shiftconst;
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl = (temp.firl xor shiftconst);
+                            temp.firl &= ~(shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2090,12 +2272,13 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[l] = temp.fir[temp.firlinkindex];
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
-                                }
+                                }                    
+                            nplusone.push_back(temp);
                         }
-                        else
+                        else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv = (temp.firv xor shiftconst);
+                            temp.firv &= ~(shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2105,9 +2288,14 @@ vector<field> possiblemoves(const field &position, const bool player){
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            nplusone.push_back(temp);
                         }
                     }
-                    nplusone.push_back(temp);
+                    else
+                    {
+                        nplusone.push_back(temp);
+                    }
+
                 }
             }
         }
@@ -2479,6 +2667,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.sec[temp.seclinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                            if(reschild > alpha){
+                                if(beta <= reschild)
+                                    return reschild;
+                                alpha = reschild;
+                            }
                         }
                         else if(temp.firvirus < 3)
                         {
@@ -2493,6 +2687,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.sec[temp.secvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                            if(reschild > alpha){
+                                if(beta <= reschild)
+                                    return reschild;
+                                alpha = reschild;
+                            }
                         }
                     }
                     else
@@ -2545,12 +2745,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 alpha = reschild;
                             }
                         }
-                    }
-                    int reschild = minimax(depth, alpha, beta, false, temp, cache);
-                    if(reschild > alpha){
-                        if(beta <= reschild)
-                            return reschild;
-                        alpha = reschild;
+                        int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                        if(reschild > alpha){
+                            if(beta <= reschild)
+                                return reschild;
+                            alpha = reschild;
+                        }
                     }
                 }
                 t4 = t2 - 7;
@@ -3147,6 +3347,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                     else
                     {
+                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
+                        if(reschild > alpha){
+                            if(beta <= reschild)
+                                return reschild;
+                            alpha = reschild;
+                        }
                         t4 += 8;
                         if(t2 < 48 and (firmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -3213,14 +3421,6 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     alpha = reschild;
                                 }
                             }
-                        }
-                        int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
-                        if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
-                        if(reschild > alpha){
-                            if(beta <= reschild)
-                                return reschild;
-                            alpha = reschild;
                         }
                     }
                 }
@@ -4027,6 +4227,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firlinkindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                         else if(temp.secvirus < 3)
                         {
@@ -4041,6 +4247,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     temp.fir[temp.firvirusindex] = 0;
                                     break;
                                 }
+                            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                            if(beta > reschild){
+                                if(reschild <= alpha)
+                                    return reschild;
+                                beta = reschild;
+                            }
                         }
                     }
                     else
@@ -4094,12 +4306,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 beta = reschild;
                             }
                         }
-                    }
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);
-                    if(beta > reschild){
-                        if(reschild <= alpha)
-                            return reschild;
-                        beta = reschild;
+                        int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                        if(beta > reschild){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                     }
                 }
                 t4 = t2 + 9;
@@ -4695,6 +4907,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                     else
                     {
+                        int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
+                        if(reschild > alpha and reschild < beta)
+                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
+                        if(reschild < beta){
+                            if(reschild <= alpha)
+                                return reschild;
+                            beta = reschild;
+                        }
                         t4 -= 8;
                         if(t3 > 15 and (secmask & (1ULL << (t4))) == 0){
                             field temptemp = nmove;
@@ -4761,14 +4981,6 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     beta = reschild;
                                 }
                             }
-                        }
-                        int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
-                        if(reschild > alpha and reschild < beta)
-                            reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
-                        if(reschild < beta){
-                            if(reschild <= alpha)
-                                return reschild;
-                            beta = reschild;
                         }
                     }
                 }
@@ -5298,11 +5510,6 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, const 
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].firlink > 3)
                 return (16384 * depth);
-        for(int i = 0; i < allmoves.size();)
-            if(allmoves[i].firvirus > 3)
-                allmoves.erase(allmoves.begin() + i);
-            else
-                ++i;
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
@@ -5330,11 +5537,6 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, const 
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].seclink > 3)
                 return (-16384 * depth);
-        for(int i = 0; i < allmoves.size();)
-            if(allmoves[i].secvirus > 3)
-                allmoves.erase(allmoves.begin() + i);
-            else
-                ++i;
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
@@ -5362,12 +5564,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         vector<field> allmoves = possiblemoves(position, true);
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].firlink > 3)
-                return make_pair(allmoves[i], 100000);
-        for(int i = 0; i < allmoves.size();)
-            if(allmoves[i].firvirus > 3)
-                allmoves.erase(allmoves.begin() + i);
-            else
-                ++i;
+                return make_pair(allmoves[i], (16384 * depth));
         //auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
@@ -5424,12 +5621,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         vector<field> allmoves = possiblemoves(position, false);
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].seclink > 3)
-                return make_pair(allmoves[i], -100000);
-        for(int i = 0; i < allmoves.size();)
-            if(allmoves[i].secvirus > 3)
-                allmoves.erase(allmoves.begin() + i);
-            else
-                ++i;
+                return make_pair(allmoves[i], (-16384 * depth));
         //auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
@@ -5572,7 +5764,7 @@ int main(){
     // for(int i = 0; i < 256; ++i){
     //     if(__builtin_popcount(i) == 4){
     //         generatexfield(pos, false, i); 
-    //         pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+    //         pair<field, int> move = minimaxmain(12, -100000, 100000, true, pos);
     //         cout << "\33[2K\r" << flush;
     //         cout << move.second << endl;
     //         //dump << move.second << endl;
@@ -5587,10 +5779,10 @@ int main(){
     auto startm = high_resolution_clock::now();
     for(;;){
         auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(15, -1000000, 1000000, false, pos);
+        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
         auto end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
-        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Minimized score: " << move.second << endl;
         pos = move.first; 
         // cout << pos.firl << endl;
@@ -5603,8 +5795,8 @@ int main(){
         //     cout << pos.fir[i] << endl;
         // for(int i = 0; i < 8; ++i)
         //     cout << pos.sec[i] << endl;
-        printfield(pos);
-        cout << endl;
+        //printfield(pos);
+        //cout << endl;
         if(pos.seclink == 4){
             cout << "Player one wins! " << endl;
             printfield(pos);
@@ -5616,10 +5808,10 @@ int main(){
             break;
         }
         start = high_resolution_clock::now();
-        move = minimaxmain(15, -1000000, 1000000, true, pos);
+        move = minimaxmain(12, -1000000, 1000000, true, pos);
         end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
-        cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Maximized score: " << move.second << endl;
         pos = move.first;
         // cout << pos.firl << endl;
@@ -5632,8 +5824,8 @@ int main(){
         //     cout << pos.fir[i] << endl;
         // for(int i = 0; i < 8; ++i)
         // //    cout << pos.sec[i] << endl;
-        printfield(pos);
-        cout << endl;
+        //printfield(pos);
+        //cout << endl;
         if(pos.firlink == 4){
             cout << "Player two wins! " << endl;
             printfield(pos);
