@@ -5143,8 +5143,10 @@ void displayProgressBar(const double total, const double finished, const string&
     cout << text << " " << int(finished * 100.0/ total) << " %\r" << flush;
 }
 
+int cutoffdepth;
+
 int minimaxscout(const int depth, int alpha, int beta, const bool player, field &position){
-    if(depth < 8){
+    if(depth < cutoffdepth){
         vector<unordered_map<field, ttentry, field>> newcache(depth);
         if(player)
             return minimax(depth, alpha, beta, true, position, newcache);
@@ -5164,7 +5166,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5189,10 +5191,9 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 if(scores[i] > alpha)
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
-        cout << "\33[2K\r" << flush;
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5216,7 +5217,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5240,7 +5241,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
                 if(scores[i] < beta)
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5255,25 +5256,46 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
 }
 
 pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool player, const field &position){
+    cutoffdepth = depth - 5;
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].firlink > 3)
                 return make_pair(allmoves[i], (16384 * depth));
-        //auto start = high_resolution_clock::now();
+        auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
-        for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
-                vector<unordered_map<field, ttentry, field>> newcache(depth);
-                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
-                ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
-            });
+        if(depth > 12){
+            scores[0] = minimaxscout(depth - 3, alpha, beta, false, allmoves[0]);
+            cout << "Best predicted score: " << scores[0] << endl;
+            for(int i = 1; i < allmoves.size(); ++i){
+                threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
+                    vector<unordered_map<field, ttentry, field>> newcache(depth);
+                    auto start = high_resolution_clock::now();
+                    scores[i] = minimax(depth - 3, scores[0], beta, false, allmoves[i], newcache);
+                    auto stop = high_resolution_clock::now();
+                    cout << "thread" << i << " time: " << duration_cast<milliseconds>(stop - start).count() << "    score: " << scores[i] << endl;
+                    ++finished;
+                    //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                });
+            }
+            for(int i = 1; i < allmoves.size(); ++i)
+                threads[i].join();
         }
-        for(int i = 0; i < allmoves.size(); ++i)
-            threads[i].join();
+        else
+        {
+            for(int i = 0; i < allmoves.size(); ++i){
+                threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
+                    vector<unordered_map<field, ttentry, field>> newcache(depth);
+                    scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
+                    ++finished;
+                    //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                });
+            }
+            for(int i = 0; i < allmoves.size(); ++i)
+                threads[i].join();
+        }
         int max = scores[0], index = 0;
         for(int i = 1; i < allmoves.size(); ++i){
             if(scores[i] > max){
@@ -5282,12 +5304,12 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        //auto end = high_resolution_clock::now();
-        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        auto end = high_resolution_clock::now();
+        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
-        //start = high_resolution_clock::now();
+        start = high_resolution_clock::now();
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
-        //end = high_resolution_clock::now();
+        end = high_resolution_clock::now();
         //cout << "Predicted alpha time: " << duration_cast<milliseconds>(end - start).count() << endl;
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
@@ -5300,7 +5322,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 if(scores[i] > alpha)
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5319,7 +5341,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].seclink > 3)
                 return make_pair(allmoves[i], (-16384 * depth));
-        //auto start = high_resolution_clock::now();
+        auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
@@ -5328,7 +5350,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5341,13 +5363,12 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        //auto end = high_resolution_clock::now();
+        auto end = high_resolution_clock::now();
         //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
-        //start = high_resolution_clock::now();
+        start = high_resolution_clock::now();
         beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
-        
-        //end = high_resolution_clock::now();
+        end = high_resolution_clock::now();
         //cout << "Predicted beta time: " << duration_cast<milliseconds>(end - start).count() << endl;
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
@@ -5360,7 +5381,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 if(scores[i] < beta)
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5463,82 +5484,84 @@ int main(){
     for(int i = 0; i < 256; ++i){
         if(__builtin_popcount(i) == 4){
             generatexfield(pos, false, i); 
-            pair<field, int> move = minimaxmain(16, -100000, 100000, true, pos);
+            auto startit = high_resolution_clock::now();
+            pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+            auto endit = high_resolution_clock::now();
             cout << "\33[2K\r" << flush;
-            cout << move.second << endl;
+            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
             //dump << move.second << endl;
         }
     }
     auto end = high_resolution_clock::now();
     cout << duration_cast<milliseconds>(end - start).count() << endl;
-    generatexfield(pos, true, rand() % 70);
-    generatexfield(pos, false, rand() % 70);
-    printfield(pos);
-    cout << endl;
-    auto startm = high_resolution_clock::now();
-    for(;;){
-        auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
-        auto end = high_resolution_clock::now();
-        cout << "\33[2K\r" << flush;
-        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        pos = move.first; 
-        // cout << pos.firl << endl;
-        // cout << pos.firv << endl;
-        // cout << pos.secl << endl;
-        // cout << pos.secv << endl;
-        // cout << "Boost1: " << pos.isboostavailablefir << endl;
-        // cout << "Boost2: " << pos.isboostavailablesec << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.fir[i] << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.sec[i] << endl;
-        //printfield(pos);
-        //cout << endl;
-        if(pos.seclink == 4){
-            cout << "Player one wins! " << endl;
-            printfield(pos);
-            break;
-        }
-        else if(pos.secvirus == 4){
-            cout << "Player one loses! " << endl;
-            printfield(pos);
-            break;
-        }
-        start = high_resolution_clock::now();
-        move = minimaxmain(12, -1000000, 1000000, true, pos);
-        end = high_resolution_clock::now();
-        cout << "\33[2K\r" << flush;
-        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-        cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        pos = move.first;
-        // cout << pos.firl << endl;
-        // cout << pos.firv << endl;
-        // cout << pos.secl << endl;
-        // cout << pos.secv << endl;
-        // cout << "Boost1: " << pos.isboostavailablefir << endl;*+
-        // cout << "Boost2: " << pos.isboostavailablesec << endl;
-        // for(int i = 0; i < 8; ++i)
-        //     cout << pos.fir[i] << endl;
-        // for(int i = 0; i < 8; ++i)
-        // //    cout << pos.sec[i] << endl;
-        //printfield(pos);
-        //cout << endl;
-        if(pos.firlink == 4){
-            cout << "Player two wins! " << endl;
-            printfield(pos);
-            break;
-        }
-        else if(pos.firvirus == 4){
-            cout << "Player two loses! " << endl;
-            printfield(pos);
-            break;
-        }
-        //this_thread::sleep_for(chrono::milliseconds(1000));
-    }
-    auto endm = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(endm - startm).count() << endl;
+    // generatexfield(pos, true, rand() % 70);
+    // generatexfield(pos, false, rand() % 70);
+    // printfield(pos);
+    // cout << endl;
+    // auto startm = high_resolution_clock::now();
+    // for(;;){
+    //     auto start = high_resolution_clock::now();
+    //     pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+    //     auto end = high_resolution_clock::now();
+    //     cout << "\33[2K\r" << flush;
+    //     //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     pos = move.first; 
+    //     // cout << pos.firl << endl;
+    //     // cout << pos.firv << endl;
+    //     // cout << pos.secl << endl;
+    //     // cout << pos.secv << endl;
+    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
+    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.fir[i] << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.sec[i] << endl;
+    //     //printfield(pos);
+    //     //cout << endl;
+    //     if(pos.seclink == 4){
+    //         cout << "Player one wins! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     else if(pos.secvirus == 4){
+    //         cout << "Player one loses! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     start = high_resolution_clock::now();
+    //     move = minimaxmain(14, -1000000, 1000000, true, pos);
+    //     end = high_resolution_clock::now();
+    //     cout << "\33[2K\r" << flush;
+    //     //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+    //     pos = move.first;
+    //     // cout << pos.firl << endl;
+    //     // cout << pos.firv << endl;
+    //     // cout << pos.secl << endl;
+    //     // cout << pos.secv << endl;
+    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;*+
+    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     //     cout << pos.fir[i] << endl;
+    //     // for(int i = 0; i < 8; ++i)
+    //     // //    cout << pos.sec[i] << endl;
+    //     //printfield(pos);
+    //     //cout << endl;
+    //     if(pos.firlink == 4){
+    //         cout << "Player two wins! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     else if(pos.firvirus == 4){
+    //         cout << "Player two loses! " << endl;
+    //         printfield(pos);
+    //         break;
+    //     }
+    //     //this_thread::sleep_for(chrono::milliseconds(1000));
+    // }
+    // auto endm = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(endm - startm).count() << endl;
     // ifstream getdata("evaluations.txt");
     // int firwin = 0, secwin = 0;
     // for(int i = 0; i < 70; ++i){
