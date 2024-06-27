@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <thread>
+#include <tbb/concurrent_unordered_map.h>
 
 using namespace std;
 using namespace chrono;
@@ -315,18 +316,17 @@ void printfield(field todisplay){
 }
 
 void removesecondlink(field &position, const int &coords){
-    const bool isboosted = position.sec[0] & 64;
     switch(position.seclinkindex)
     {
         case 1:
-        if(isboosted)
+        if(position.sec[0] & 64)
             position.isboostavailablesec = true;
         --position.seclinkindex;
         position.sec[0] = 0;
         return;
         case 2:
         if((position.sec[0] & 63) == coords){
-            if(isboosted)
+            if(position.sec[0] & 64)
                 position.isboostavailablesec = true;
             --position.seclinkindex;
             position.sec[0] = position.sec[1];
@@ -338,7 +338,7 @@ void removesecondlink(field &position, const int &coords){
         return;
         case 3:
         if((position.sec[0] & 63) == coords){
-            if(isboosted)
+            if(position.sec[0] & 64)
                 position.isboostavailablesec = true;
             --position.seclinkindex;
             position.sec[0] = position.sec[2];
@@ -356,7 +356,7 @@ void removesecondlink(field &position, const int &coords){
         return;
         case 4:
         if((position.sec[0] & 63) == coords){
-            if(isboosted)
+            if(position.sec[0] & 64)
                 position.isboostavailablesec = true;
             --position.seclinkindex;
             position.sec[0] = position.sec[3];
@@ -382,18 +382,17 @@ void removesecondlink(field &position, const int &coords){
 }
 
 void removefirstlink(field &position, const int &coords){
-    const bool isboosted = position.fir[0] & 64;
     switch(position.firlinkindex)
     {
         case 1:
-        if(isboosted)
+        if(position.fir[0] & 64)
             position.isboostavailablefir = true;
         --position.firlinkindex;
         position.fir[0] = 0;
         return;
         case 2:
         if((position.fir[0] & 63) == coords){
-            if(isboosted)
+            if(position.fir[0] & 64)
                 position.isboostavailablefir = true;
             --position.firlinkindex;
             position.fir[0] = position.fir[1];
@@ -405,7 +404,7 @@ void removefirstlink(field &position, const int &coords){
         return;
         case 3:
         if((position.fir[0] & 63) == coords){
-            if(isboosted)
+            if(position.fir[0] & 64)
                 position.isboostavailablefir = true;
             --position.firlinkindex;
             position.fir[0] = position.fir[2];
@@ -423,7 +422,7 @@ void removefirstlink(field &position, const int &coords){
         return;
         case 4:
         if((position.fir[0] & 63) == coords){
-            if(isboosted)
+            if(position.fir[0] & 64)
                 position.isboostavailablefir = true;
             --position.firlinkindex;
             position.fir[0] = position.fir[3];
@@ -449,18 +448,17 @@ void removefirstlink(field &position, const int &coords){
 }
 
 void removesecondvirus(field &position, const int &coords){
-    const bool isboosted = position.sec[4] & 64;
     switch(position.secvirusindex)
     {
         case 5:
-        if(isboosted)
+        if(position.sec[4] & 64)
             position.isboostavailablesec = true;
         --position.secvirusindex;
         position.sec[4] = 0;
         return;
         case 6:
         if((position.sec[4] & 63) == coords){
-            if(isboosted)
+            if(position.sec[4] & 64)
                 position.isboostavailablesec = true;
             --position.secvirusindex;
             position.sec[4] = position.sec[5];
@@ -472,7 +470,7 @@ void removesecondvirus(field &position, const int &coords){
         return;
         case 7:
         if((position.sec[4] & 63) == coords){
-            if(isboosted)
+            if(position.sec[4] & 64)
                 position.isboostavailablesec = true;
             --position.secvirusindex;
             position.sec[4] = position.sec[6];
@@ -490,7 +488,7 @@ void removesecondvirus(field &position, const int &coords){
         return;
         case 8:
         if((position.sec[4] & 63) == coords){
-            if(isboosted)
+            if(position.sec[4] & 64)
                 position.isboostavailablesec = true;
             --position.secvirusindex;
             position.sec[4] = position.sec[7];
@@ -516,18 +514,17 @@ void removesecondvirus(field &position, const int &coords){
 }
 
 void removefirstvirus(field &position, const int &coords){
-    const bool isboosted = position.fir[4] & 64;
     switch(position.firvirusindex)
     {
         case 5:
-        if(isboosted)
+        if(position.fir[4] & 64)
             position.isboostavailablefir = true;
         --position.firvirusindex;
         position.fir[4] = 0;
         return;
         case 6:
         if((position.fir[4] & 63) == coords){
-            if(isboosted)
+            if(position.fir[4] & 64)
                 position.isboostavailablefir = true;
             --position.firvirusindex;
             position.fir[4] = position.fir[5];
@@ -539,7 +536,7 @@ void removefirstvirus(field &position, const int &coords){
         return;
         case 7:
         if((position.fir[4] & 63) == coords){
-            if(isboosted)
+            if(position.fir[4] & 64)
                 position.isboostavailablefir = true;
             --position.firvirusindex;
             position.fir[4] = position.fir[6];
@@ -557,7 +554,7 @@ void removefirstvirus(field &position, const int &coords){
         return;
         case 8:
         if((position.fir[4] & 63) == coords){
-            if(isboosted)
+            if(position.fir[4] & 64)
                 position.isboostavailablefir = true;
             --position.firvirusindex;
             position.fir[4] = position.fir[7];
@@ -1220,7 +1217,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firv &= ~(1ULL << t2);
+                nmove.firv ^= (1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
@@ -1230,7 +1227,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1246,7 +1243,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1274,7 +1271,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1290,7 +1287,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1318,7 +1315,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1334,7 +1331,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1362,7 +1359,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1378,7 +1375,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1403,7 +1400,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firl &= ~(1ULL << t2);
+                nmove.firl ^= (1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
@@ -1413,7 +1410,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l){
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1430,7 +1427,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1458,7 +1455,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1474,7 +1471,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1502,7 +1499,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1518,7 +1515,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1546,7 +1543,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -1562,7 +1559,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.sec[l] & 63) == t4){
                                     if(temp.sec[l] & 64)
@@ -2218,7 +2215,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secv &= ~(1ULL << t2);
+                nmove.secv ^= (1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
@@ -2228,7 +2225,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2243,7 +2240,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2270,7 +2267,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2285,7 +2282,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2312,7 +2309,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2327,7 +2324,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2354,7 +2351,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2369,7 +2366,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2393,7 +2390,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secl &= ~(1ULL << t2);
+                nmove.secl ^= (1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
@@ -2403,7 +2400,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2418,7 +2415,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2445,7 +2442,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2460,7 +2457,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2487,7 +2484,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2502,7 +2499,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2529,7 +2526,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             for(int l = 0;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2544,7 +2541,7 @@ vector<field> possiblemoves(const field &position, const bool player){
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             for(int l = 4;; ++l)
                                 if((temp.fir[l] & 63) == t4){
                                     if(temp.fir[l] & 64)
@@ -2657,7 +2654,7 @@ vector<field> possiblemoves(const field &position, const bool player){
 //     return true;
 // }
 
-const int mincachedepth = 1;
+const int mincachedepth = 1, maxthreads = 50, mindepthformultithreadedsearch = 9;
 
 int minimax(int depth, int alpha, int beta, const bool player, field &position, vector<unordered_map<field, ttentry, field>> &cache){
     if(player){
@@ -2839,6 +2836,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     return alpha;
                 if(entry.flag) 
                     return entry.score;
+                //beta = entry.score;
             }
         }
         for(int i = 0; i < position.firlinkindex; ++i){
@@ -2850,7 +2848,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 --temp.firlinkindex;
                 temp.fir[i] = temp.fir[temp.firlinkindex];
                 temp.fir[temp.firlinkindex] = 0;
-                temp.firl &= ~(1ULL << t2);
+                temp.firl ^= (1ULL << t2);
                 ++temp.firlink;
                 int reschild = minimax(depth, alpha, beta, false, temp, cache);
                 if(reschild > alpha){
@@ -2905,9 +2903,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 field nmove = position;
                 if(i == 0)
-                    nmove.firl &= ~(1ULL << t2);
+                    nmove.firl ^= (1ULL << t2);
                 else
-                    nmove.firv &= ~(1ULL << t2);
+                    nmove.firv ^= (1ULL << t2);
                 t4 = t2 - 8;
                 if(t2 > 7 and (firmask & (1ULL << (t4))) == 0){
                     field temp = nmove;
@@ -2923,7 +2921,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temp.secl & (1ULL << (t4))){
                             ++temp.firlink;
-                            temp.secl &= ~(1ULL << (t4));
+                            temp.secl ^= (1ULL << (t4));
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -2935,7 +2933,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(1ULL << (t4));
+                            temp.secv ^= (1ULL << (t4));
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -2962,7 +2960,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(secmask & (1ULL << (t4))){
                                 if(temptemp.secl & (1ULL << (t4))){
                                     ++temptemp.firlink;
-                                    temptemp.secl &= ~(1ULL << (t4));
+                                    temptemp.secl ^= (1ULL << (t4));
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
@@ -2974,7 +2972,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
-                                    temptemp.secv &= ~(1ULL << (t4));
+                                    temptemp.secv ^= (1ULL << (t4));
                                     removesecondvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
@@ -3017,7 +3015,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temptemp.secl & (1ULL << (t4))){
                             ++temptemp.firlink;
-                            temptemp.secl &= ~(1ULL << (t4));
+                            temptemp.secl ^= (1ULL << (t4));
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
@@ -3029,7 +3027,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
-                            temptemp.secv &= ~(1ULL << (t4));
+                            temptemp.secv ^= (1ULL << (t4));
                             removesecondvirus(temptemp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3068,7 +3066,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temptemp.secl & (1ULL << (t4))){
                             ++temptemp.firlink;
-                            temptemp.secl &= ~(1ULL << (t4));
+                            temptemp.secl ^= (1ULL << (t4));
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
@@ -3080,7 +3078,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
-                            temptemp.secv &= ~(1ULL << (t4));
+                            temptemp.secv ^= (1ULL << (t4));
                             removesecondvirus(temptemp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3119,7 +3117,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temp.secl & (1ULL << (t4))){
                             ++temp.firlink;
-                            temp.secl &= ~(1ULL << (t4));
+                            temp.secl ^= (1ULL << (t4));
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3132,7 +3130,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(1ULL << (t4));
+                            temp.secv ^= (1ULL << (t4));
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3161,7 +3159,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(secmask & (1ULL << (t4))){
                                 if(temptemp.secl & (1ULL << (t4))){
                                     ++temptemp.firlink;
-                                    temptemp.secl &= ~(1ULL << (t4));
+                                    temptemp.secl ^= (1ULL << (t4));
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
@@ -3173,7 +3171,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
-                                    temptemp.secv &= ~(1ULL << (t4));
+                                    temptemp.secv ^= (1ULL << (t4));
                                     removesecondvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -3222,7 +3220,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temp.secl & (1ULL << (t4))){
                             ++temp.firlink;
-                            temp.secl &= ~(1ULL << (t4));
+                            temp.secl ^= (1ULL << (t4));
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3234,7 +3232,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(1ULL << (t4));
+                            temp.secv ^= (1ULL << (t4));
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3263,7 +3261,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(secmask & (1ULL << (t4))){
                                 if(temptemp.secl & (1ULL << (t4))){
                                     ++temptemp.firlink;
-                                    temptemp.secl &= ~(1ULL << (t4));
+                                    temptemp.secl ^= (1ULL << (t4));
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
@@ -3275,7 +3273,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
-                                    temptemp.secv &= ~(1ULL << (t4));
+                                    temptemp.secv ^= (1ULL << (t4));
                                     removesecondvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -3324,7 +3322,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temptemp.secl & (1ULL << (t4))){
                             ++temptemp.firlink;
-                            temptemp.secl &= ~(1ULL << (t4));
+                            temptemp.secl ^= (1ULL << (t4));
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
@@ -3336,7 +3334,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
-                            temptemp.secv &= ~(1ULL << (t4));
+                            temptemp.secv ^= (1ULL << (t4));
                             removesecondvirus(temptemp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3375,7 +3373,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << (t4))){
                         if(temptemp.secl & (1ULL << (t4))){
                             ++temptemp.firlink;
-                            temptemp.secl &= ~(1ULL << (t4));
+                            temptemp.secl ^= (1ULL << (t4));
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
@@ -3387,7 +3385,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.firvirus < 3)
                         {
                             ++temptemp.firvirus;
-                            temptemp.secv &= ~(1ULL << (t4));
+                            temptemp.secv ^= (1ULL << (t4));
                             removesecondvirus(temptemp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3426,7 +3424,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & (1ULL << t4)){
                         if(temp.secl & (1ULL << (t4))){
                             ++temp.firlink;
-                            temp.secl &= ~(1ULL << (t4));
+                            temp.secl ^= (1ULL << (t4));
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3438,7 +3436,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(1ULL << (t4));
+                            temp.secv ^= (1ULL << (t4));
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3475,7 +3473,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(secmask & (1ULL << (t4))){
                                 if(temptemp.secl & (1ULL << (t4))){
                                     ++temptemp.firlink;
-                                    temptemp.secl &= ~(1ULL << (t4));
+                                    temptemp.secl ^= (1ULL << (t4));
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
@@ -3487,7 +3485,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.firvirus < 3)
                                 {
                                     ++temptemp.firvirus;
-                                    temptemp.secv &= ~(1ULL << (t4));
+                                    temptemp.secv ^= (1ULL << (t4));
                                     removesecondvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, alpha + 1, false, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -3519,7 +3517,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firv &= ~(1ULL << t2);
+                nmove.firv ^= (1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
@@ -3529,7 +3527,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3541,7 +3539,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3574,7 +3572,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3586,7 +3584,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3619,7 +3617,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3631,7 +3629,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3664,7 +3662,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3676,7 +3674,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3706,7 +3704,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.firl &= ~(1ULL << t2);
+                nmove.firl ^= (1ULL << t2);
                 t4 = t2 - 8; //t2 - 8
                 shiftconst = (1ULL << t4);
                 if(t2 > 7 and (firmask & shiftconst) == 0){
@@ -3716,7 +3714,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3728,7 +3726,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3761,7 +3759,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3773,7 +3771,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3806,7 +3804,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3818,7 +3816,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -3851,7 +3849,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(secmask & shiftconst){
                         if(temp.secl & shiftconst){
                             ++temp.firlink;
-                            temp.secl &= ~(shiftconst);
+                            temp.secl ^= (shiftconst);
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
@@ -3863,7 +3861,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.firvirus < 3)
                         {
                             ++temp.firvirus;
-                            temp.secv &= ~(shiftconst);
+                            temp.secv ^= (shiftconst);
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, alpha + 1, false, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4077,6 +4075,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     return beta;
                 if(entry.flag) 
                     return entry.score;
+                //alpha = entry.score;
             }
         }
         for(int i = 0; i < position.seclinkindex; ++i){
@@ -4088,7 +4087,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 --temp.seclinkindex;
                 temp.sec[i] = temp.sec[temp.seclinkindex];
                 temp.sec[temp.seclinkindex] = 0;
-                temp.secl &= ~(1ULL << t2);
+                temp.secl ^= (1ULL << t2);
                 ++temp.seclink;
                 int reschild = minimax(depth, alpha, beta, true, temp, cache);
                 if(beta > reschild){
@@ -4143,9 +4142,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 field nmove = position;
                 if(i == 0)
-                    nmove.secl &= ~(1ULL << t2);
+                    nmove.secl ^= (1ULL << t2);
                 else
-                    nmove.secv &= ~(1ULL << t2);
+                    nmove.secv ^= (1ULL << t2);
                 t4 = t2 + 8;
                 if(t3 < 56 and (secmask & (1ULL << (t4))) == 0){
                     field temp = nmove;
@@ -4161,7 +4160,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temp.firl & (1ULL << (t4))){
                             ++temp.seclink;
-                            temp.firl &= ~(1ULL << (t4));
+                            temp.firl ^= (1ULL << (t4));
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
@@ -4173,7 +4172,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(1ULL << (t4));
+                            temp.firv ^= (1ULL << (t4));
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
@@ -4201,7 +4200,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(firmask & (1ULL << (t4))){
                                 if(temptemp.firl & (1ULL << (t4))){
                                     ++temptemp.seclink;
-                                    temptemp.firl &= ~(1ULL << (t4));
+                                    temptemp.firl ^= (1ULL << (t4));
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
@@ -4213,7 +4212,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
-                                    temptemp.firv &= ~(1ULL << (t4));
+                                    temptemp.firv ^= (1ULL << (t4));
                                     removefirstvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
@@ -4256,7 +4255,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temptemp.firl & (1ULL << (t4))){
                             ++temptemp.seclink;
-                            temptemp.firl &= ~(1ULL << (t4));
+                            temptemp.firl ^= (1ULL << (t4));
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
@@ -4268,7 +4267,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
-                            temptemp.firv &= ~(1ULL << (t4));
+                            temptemp.firv ^= (1ULL << (t4));
                             removefirstvirus(temptemp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4307,7 +4306,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temptemp.firl & (1ULL << (t4))){
                             ++temptemp.seclink;
-                            temptemp.firl &= ~(1ULL << (t4));
+                            temptemp.firl ^= (1ULL << (t4));
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
@@ -4319,7 +4318,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
-                            temptemp.firv &= ~(1ULL << (t4));
+                            temptemp.firv ^= (1ULL << (t4));
                             removefirstvirus(temptemp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4358,7 +4357,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temp.firl & (1ULL << (t4))){
                             ++temp.seclink;
-                            temp.firl &= ~(1ULL << (t4));
+                            temp.firl ^= (1ULL << (t4));
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
@@ -4370,7 +4369,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(1ULL << (t4));
+                            temp.firv ^= (1ULL << (t4));
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4399,7 +4398,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(firmask & (1ULL << (t4))){
                                 if(temptemp.firl & (1ULL << (t4))){
                                     ++temptemp.seclink;
-                                    temptemp.firl &= ~(1ULL << (t4));
+                                    temptemp.firl ^= (1ULL << (t4));
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
@@ -4411,7 +4410,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
-                                    temptemp.firv &= ~(1ULL << (t4));
+                                    temptemp.firv ^= (1ULL << (t4));
                                     removefirstvirus(temptemp, t4);
                                     int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -4460,7 +4459,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temp.firl & (1ULL << (t4))){
                             ++temp.seclink;
-                            temp.firl &= ~(1ULL << (t4));
+                            temp.firl ^= (1ULL << (t4));
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
@@ -4472,7 +4471,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(1ULL << (t4));
+                            temp.firv ^= (1ULL << (t4));
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4501,7 +4500,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(firmask & (1ULL << (t4))){
                                 if(temptemp.firl & (1ULL << (t4))){
                                     ++temptemp.seclink;
-                                    temptemp.firl &= ~(1ULL << (t4));
+                                    temptemp.firl ^= (1ULL << (t4));
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
@@ -4513,7 +4512,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
-                                    temptemp.firv &= ~(1ULL << (t4));
+                                    temptemp.firv ^= (1ULL << (t4));
                                     removefirstvirus(temptemp, t4);
                                     int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -4562,7 +4561,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temptemp.firl & (1ULL << (t4))){
                             ++temptemp.seclink;
-                            temptemp.firl &= ~(1ULL << (t4));
+                            temptemp.firl ^= (1ULL << (t4));
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
@@ -4574,7 +4573,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
-                            temptemp.firv &= ~(1ULL << (t4));
+                            temptemp.firv ^= (1ULL << (t4));
                             removefirstvirus(temptemp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4613,7 +4612,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temptemp.firl & (1ULL << (t4))){
                             ++temptemp.seclink;
-                            temptemp.firl &= ~(1ULL << (t4));
+                            temptemp.firl ^= (1ULL << (t4));
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
@@ -4625,7 +4624,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temptemp.secvirus < 3)
                         {
                             ++temptemp.secvirus;
-                            temptemp.firv &= ~(1ULL << (t4));
+                            temptemp.firv ^= (1ULL << (t4));
                             removefirstvirus(temptemp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4664,7 +4663,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & (1ULL << (t4))){
                         if(temp.firl & (1ULL << (t4))){
                             ++temp.seclink;
-                            temp.firl &= ~(1ULL << (t4));
+                            temp.firl ^= (1ULL << (t4));
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
@@ -4676,7 +4675,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(1ULL << (t4));
+                            temp.firv ^= (1ULL << (t4));
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4713,7 +4712,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(firmask & (1ULL << (t4))){
                                 if(temptemp.firl & (1ULL << (t4))){
                                     ++temptemp.seclink;
-                                    temptemp.firl &= ~(1ULL << (t4));
+                                    temptemp.firl ^= (1ULL << (t4));
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
@@ -4725,7 +4724,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 else if(temptemp.secvirus < 3)
                                 {
                                     ++temptemp.secvirus;
-                                    temptemp.firv &= ~(1ULL << (t4));
+                                    temptemp.firv ^= (1ULL << (t4));
                                     removefirstvirus(temptemp, t4);
                                     int reschild = minimax(depth, beta - 1, beta, true, temptemp, cache);
                                     if(reschild > alpha and reschild < beta)
@@ -4757,7 +4756,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secv &= ~(1ULL << t2);
+                nmove.secv ^= (1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
@@ -4767,7 +4766,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -4779,7 +4778,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4812,7 +4811,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -4824,7 +4823,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4857,7 +4856,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -4869,7 +4868,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4902,7 +4901,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -4914,7 +4913,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4944,7 +4943,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 int t4;
                 uint64_t shiftconst;
                 field nmove = position;
-                nmove.secl &= ~(1ULL << t2);
+                nmove.secl ^= (1ULL << t2);
                 t4 = t2 + 8; //t2 + 8
                 shiftconst = (1ULL << t4);
                 if(t2 < 56 and (secmask & shiftconst) == 0){
@@ -4954,7 +4953,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -4966,7 +4965,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -4999,7 +4998,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -5011,7 +5010,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -5044,7 +5043,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -5056,7 +5055,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -5089,7 +5088,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if(firmask & shiftconst){
                         if(temp.firl & shiftconst){
                             ++temp.seclink;
-                            temp.firl &= ~(shiftconst);
+                            temp.firl ^= (shiftconst);
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
@@ -5101,7 +5100,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         else if(temp.secvirus < 3)
                         {
                             ++temp.secvirus;
-                            temp.firv &= ~(shiftconst);
+                            temp.firv ^= (shiftconst);
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, beta - 1, beta, true, temp, cache);
                             if(reschild > alpha and reschild < beta)
@@ -5143,6 +5142,78 @@ void displayProgressBar(const double total, const double finished, const string&
     cout << text << " " << int(finished * 100.0/ total) << " %\r" << flush;
 }
 
+const int maxoptimaldepth = 8;
+
+int smartminimax(const int depth, int alpha, int beta, const bool player, field &position, vector<unordered_map<field, ttentry, field>> &cache, vector<unordered_map<field, int, field>> &moveorder){
+    if(depth < maxoptimaldepth)
+        return minimax(depth, alpha, beta, player, position, cache);
+    if(player){
+        vector<field> allmoves = possiblemoves(position, true);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].firlink > 3)
+                return (16384 * depth);
+        auto it = moveorder[depth].find(position);
+        if (it != moveorder[depth].end())
+            swap(allmoves[0], allmoves[it->second]);
+        int bestindex = 0;
+        bool scout = false;
+        for(int i = 0; i < allmoves.size(); ++i){
+            int reschild;
+            if(scout){
+                reschild = smartminimax(depth - 1, alpha, alpha + 1, false, allmoves[i], cache, moveorder);
+                if(reschild > alpha)
+                    reschild = smartminimax(depth - 1, reschild, beta, false, allmoves[i], cache, moveorder);
+            }
+            else
+                reschild = smartminimax(depth - 1, alpha, beta, false, allmoves[i], cache, moveorder);
+            if(reschild > alpha){
+                if(beta <= reschild){
+                    moveorder[depth][position] = i;
+                    return reschild;
+                }
+                alpha = reschild;
+                bestindex = i;
+                scout = true;
+            }
+        }
+        moveorder[depth][position] = bestindex;
+        return alpha;
+    }
+    else
+    {
+        vector<field> allmoves = possiblemoves(position, false);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].seclink > 3)
+                return (-16384 * depth);
+        auto it = moveorder[depth].find(position);
+        if (it != moveorder[depth].end())
+            swap(allmoves[0], allmoves[it->second]);
+        int bestindex = 0;
+        bool scout = false;
+        for(int i = 0; i < allmoves.size(); ++i){
+            int reschild;
+            if(scout){
+                reschild = smartminimax(depth - 1, beta - 1, beta, true, allmoves[i], cache, moveorder);
+                if(reschild < beta)
+                    reschild = smartminimax(depth - 1, alpha, reschild, true, allmoves[i], cache, moveorder);
+            }
+            else
+                reschild = smartminimax(depth - 1, alpha, beta, true, allmoves[i], cache, moveorder);
+            if(reschild < beta){
+                if(reschild <= alpha){
+                    moveorder[depth][position] = i;
+                    return reschild;
+                }
+                beta = reschild;
+                bestindex = i;
+                scout = true;
+            }
+        }
+        moveorder[depth][position] = bestindex;
+        return beta;
+    }
+}
+
 int cutoffdepth;
 
 int minimaxscout(const int depth, int alpha, int beta, const bool player, field &position){
@@ -5166,7 +5237,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5191,7 +5262,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 if(scores[i] > alpha)
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5217,7 +5288,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5241,7 +5312,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
                 if(scores[i] < beta)
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5266,36 +5337,16 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
-        if(depth > 12){
-            scores[0] = minimaxscout(depth - 3, alpha, beta, false, allmoves[0]);
-            cout << "Best predicted score: " << scores[0] << endl;
-            for(int i = 1; i < allmoves.size(); ++i){
-                threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
-                    vector<unordered_map<field, ttentry, field>> newcache(depth);
-                    auto start = high_resolution_clock::now();
-                    scores[i] = minimax(depth - 3, scores[0], beta, false, allmoves[i], newcache);
-                    auto stop = high_resolution_clock::now();
-                    cout << "thread" << i << " time: " << duration_cast<milliseconds>(stop - start).count() << "    score: " << scores[i] << endl;
-                    ++finished;
-                    //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
-                });
-            }
-            for(int i = 1; i < allmoves.size(); ++i)
-                threads[i].join();
+        for(int i = 0; i < allmoves.size(); ++i){
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
+                vector<unordered_map<field, ttentry, field>> newcache(depth);
+                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
+                ++finished;
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+            });
         }
-        else
-        {
-            for(int i = 0; i < allmoves.size(); ++i){
-                threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
-                    vector<unordered_map<field, ttentry, field>> newcache(depth);
-                    scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
-                    ++finished;
-                    //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
-                });
-            }
-            for(int i = 0; i < allmoves.size(); ++i)
-                threads[i].join();
-        }
+        for(int i = 0; i < allmoves.size(); ++i)
+            threads[i].join();
         int max = scores[0], index = 0;
         for(int i = 1; i < allmoves.size(); ++i){
             if(scores[i] > max){
@@ -5305,12 +5356,11 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         }
         swap(allmoves[0], allmoves[index]);
         auto end = high_resolution_clock::now();
-        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
         start = high_resolution_clock::now();
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
         end = high_resolution_clock::now();
-        //cout << "Predicted alpha time: " << duration_cast<milliseconds>(end - start).count() << endl;
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
@@ -5318,11 +5368,12 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
-                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
+                vector<unordered_map<field, int, field>> newmoveorder(depth);
+                scores[i] = smartminimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, newmoveorder);
                 if(scores[i] > alpha)
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
+                    scores[i] = smartminimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, newmoveorder);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5350,7 +5401,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5381,7 +5432,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 if(scores[i] < beta)
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
                 ++finished;
-                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5479,89 +5530,98 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i); 
-            auto startit = high_resolution_clock::now();
-            pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
-            auto endit = high_resolution_clock::now();
-            cout << "\33[2K\r" << flush;
-            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-            //dump << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // generatexfield(pos, true, rand() % 70);
-    // generatexfield(pos, false, rand() % 70);
-    // printfield(pos);
-    // cout << endl;
-    // auto startm = high_resolution_clock::now();
-    // for(;;){
-    //     auto start = high_resolution_clock::now();
-    //     pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
-    //     auto end = high_resolution_clock::now();
-    //     cout << "\33[2K\r" << flush;
-    //     //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     pos = move.first; 
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.sec[i] << endl;
-    //     //printfield(pos);
-    //     //cout << endl;
-    //     if(pos.seclink == 4){
-    //         cout << "Player one wins! " << endl;
-    //         printfield(pos);
-    //         break;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i); 
+    //         auto startit = high_resolution_clock::now();
+    //         pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+    //         auto endit = high_resolution_clock::now();
+    //         cout << "\33[2K\r" << flush;
+    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //         //dump << move.second << endl;
     //     }
-    //     else if(pos.secvirus == 4){
-    //         cout << "Player one loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     start = high_resolution_clock::now();
-    //     move = minimaxmain(14, -1000000, 1000000, true, pos);
-    //     end = high_resolution_clock::now();
-    //     cout << "\33[2K\r" << flush;
-    //     //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-    //     pos = move.first;
-    //     // cout << pos.firl << endl;
-    //     // cout << pos.firv << endl;
-    //     // cout << pos.secl << endl;
-    //     // cout << pos.secv << endl;
-    //     // cout << "Boost1: " << pos.isboostavailablefir << endl;*+
-    //     // cout << "Boost2: " << pos.isboostavailablesec << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     //     cout << pos.fir[i] << endl;
-    //     // for(int i = 0; i < 8; ++i)
-    //     // //    cout << pos.sec[i] << endl;
-    //     //printfield(pos);
-    //     //cout << endl;
-    //     if(pos.firlink == 4){
-    //         cout << "Player two wins! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     else if(pos.firvirus == 4){
-    //         cout << "Player two loses! " << endl;
-    //         printfield(pos);
-    //         break;
-    //     }
-    //     //this_thread::sleep_for(chrono::milliseconds(1000));
     // }
-    // auto endm = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(endm - startm).count() << endl;
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    // return 1;
+    generatexfield(pos, true, rand() % 70);
+    generatexfield(pos, false, rand() % 70);
+    printfield(pos);
+    cout << endl;
+    auto startm = high_resolution_clock::now();
+    for(;;){
+        auto start = high_resolution_clock::now();
+        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+        auto end = high_resolution_clock::now();
+        cout << "\33[2K\r" << flush;
+        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+        pos = move.first; 
+        // vector<field> allmoves = possiblemoves(pos, false);
+        // for(int i = 0; i < allmoves.size(); ++i){
+        //     printfield(allmoves[i]);
+        //     cout << i << " ^" << endl;
+        // }
+        // int ans;
+        // cin >> ans;
+        // pos = allmoves[ans];
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.sec[i] << endl;
+        //printfield(pos);
+        //cout << endl;
+        if(pos.seclink == 4){
+            cout << "Player one wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.secvirus == 4){
+            cout << "Player one loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        start = high_resolution_clock::now();
+        move = minimaxmain(14, -1000000, 1000000, true, pos);
+        end = high_resolution_clock::now();
+        cout << "\33[2K\r" << flush;
+        //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+        pos = move.first;
+        // cout << pos.firl << endl;
+        // cout << pos.firv << endl;
+        // cout << pos.secl << endl;
+        // cout << pos.secv << endl;
+        // cout << "Boost1: " << pos.isboostavailablefir << endl;*+
+        // cout << "Boost2: " << pos.isboostavailablesec << endl;
+        // for(int i = 0; i < 8; ++i)
+        //     cout << pos.fir[i] << endl;
+        // for(int i = 0; i < 8; ++i)
+        // //    cout << pos.sec[i] << endl;
+        //printfield(pos);
+        //cout << endl;
+        if(pos.firlink == 4){
+            cout << "Player two wins! " << endl;
+            printfield(pos);
+            break;
+        }
+        else if(pos.firvirus == 4){
+            cout << "Player two loses! " << endl;
+            printfield(pos);
+            break;
+        }
+        //this_thread::sleep_for(chrono::milliseconds(1000));
+    }
+    auto endm = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(endm - startm).count() << endl;
     // ifstream getdata("evaluations.txt");
     // int firwin = 0, secwin = 0;
     // for(int i = 0; i < 70; ++i){
