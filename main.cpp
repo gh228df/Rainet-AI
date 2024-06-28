@@ -45,7 +45,7 @@ struct field{
     int secvirus = 0;
     int seclink = 0;
     int evaluatefir(){
-        int res = (secvirus << 10) + (firlink << 10) - (firvirus << 11) - (seclink << 11);
+        int res = (firlink << 10) - (firvirus << 11) - (seclink << 11) + (secvirus << 10);
         for(int i = 0; i < 8; ++i)
             res -= (fir[i] & 56);
         return res;
@@ -2657,7 +2657,7 @@ vector<field> possiblemoves(const field &position, const bool player){
 //     return true;
 // }
 
-const int mincachedepth = 1, maxthreads = 50, mindepthformultithreadedsearch = 9;
+const int mincachedepth = 2, maxthreads = 50, mindepthformultithreadedsearch = 9;
 
 int minimax(int depth, int alpha, int beta, const bool player, field &position, vector<unordered_map<field, ttentry, field>> &cache){
     if(player){
@@ -2842,7 +2842,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         return alpha;
                     if(entry.flag) //if the cached alpha is exact and it is bigger than the current alpha (because of the condition above) then we can return it
                         return entry.score;
-                    beta = entry.score;
+                    beta = min(beta, entry.score);
                     //cached alpha is lower bound
                 }
                 else
@@ -4284,7 +4284,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         return beta;
                     if(entry.flag) //if the cached beta is exact and it is smaller than the current beta (because of the condition above) then we can return it
                         return entry.score;
-                    alpha = entry.score;
+                    alpha = max(alpha, entry.score);
                     //cached beta is upper bound
                 }
                 else
@@ -5938,22 +5938,22 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i); 
-            auto startit = high_resolution_clock::now();
-            pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
-            auto endit = high_resolution_clock::now();
-            cout << "\33[2K\r" << flush;
-            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-            //dump << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    return 1;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i); 
+    //         auto startit = high_resolution_clock::now();
+    //         pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+    //         auto endit = high_resolution_clock::now();
+    //         cout << "\33[2K\r" << flush;
+    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //         //dump << move.second << endl;
+    //     }
+    // }
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    // return 1;
     generatexfield(pos, true, indexes[rand() % 70]);
     generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
