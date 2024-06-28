@@ -17,6 +17,7 @@ int firewallsec = -1; //0b ycoords(3bits) xcoords(3bits)
 struct ttentry{
 	int score;
 	bool flag;
+    bool notcutoff;
 };
 
 struct field{
@@ -44,13 +45,13 @@ struct field{
     int secvirus = 0;
     int seclink = 0;
     int evaluatefir(){
-        int res = (firlink << 10) - (firvirus << 11) - (seclink << 11);
+        int res = (secvirus << 10) + (firlink << 10) - (firvirus << 11) - (seclink << 11);
         for(int i = 0; i < 8; ++i)
             res -= (fir[i] & 56);
         return res;
     }
     int evaluatesec(){
-        int res = (secvirus << 11) - (seclink << 10) + (firlink << 11);
+        int res = (secvirus << 11) - (seclink << 10) + (firlink << 11) - (firvirus << 10);
         for(int i = 0; i < 8; ++i)
             res -= (sec[i] & 56);
         return res;
@@ -605,14 +606,6 @@ vector<field> possiblemoves(const field &position, const bool player){
                 temp.isboostavailablefir = false;
                 if(i > 4)
                     swap(temp.fir[i], temp.fir[4]);
-                nplusone.push_back(temp);
-            }
-            for(int i = 0; i < position.firlinkindex; ++i){
-                field temp = position;
-                temp.fir[i] |= 64;
-                temp.isboostavailablefir = false;
-                if(i > 0)
-                    swap(temp.fir[i], temp.fir[0]);
                 nplusone.push_back(temp);
             }
         }
@@ -1212,6 +1205,15 @@ vector<field> possiblemoves(const field &position, const bool player){
                     }
                 }
             }
+            else
+                for(int i = 0; i < position.firlinkindex; ++i){
+                    field temp = position;
+                    temp.fir[i] |= 64;
+                    temp.isboostavailablefir = false;
+                    if(i > 0)
+                        swap(temp.fir[i], temp.fir[0]);
+                    nplusone.push_back(temp);
+                }
             for(int i = startvirus; i < position.firvirusindex; ++i){
                 const int t = (position.fir[i] & 7), t2 = position.fir[i];
                 int t4;
@@ -1604,14 +1606,6 @@ vector<field> possiblemoves(const field &position, const bool player){
                 temp.isboostavailablesec = false;
                 if(i > 4)
                     swap(temp.sec[i], temp.sec[4]);
-                nplusone.push_back(temp);
-            }
-            for(int i = 0; i < position.seclinkindex; ++i){
-                field temp = position;
-                temp.sec[i] |= 64;
-                temp.isboostavailablesec = false;
-                if(i > 0)
-                    swap(temp.sec[i], temp.sec[0]);
                 nplusone.push_back(temp);
             }
         }
@@ -2210,6 +2204,15 @@ vector<field> possiblemoves(const field &position, const bool player){
                     }
                 }
             }
+            else
+                for(int i = 0; i < position.seclinkindex; ++i){
+                    field temp = position;
+                    temp.sec[i] |= 64;
+                    temp.isboostavailablesec = false;
+                    if(i > 0)
+                        swap(temp.sec[i], temp.sec[0]);
+                    nplusone.push_back(temp);
+                }
             for(int i = startvirus; i < position.secvirusindex; ++i){
                 const int t = (position.sec[i] & 7), t2 = position.sec[i];
                 int t4;
@@ -2728,8 +2731,10 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             if(position.fir[0] & 64){
                 const int cachedpos = (position.fir[0] & 63), t = (cachedpos & 7);
-                if(cachedpos == 5 or cachedpos == 4 or cachedpos == 3 or cachedpos == 2 or (cachedpos == 11 and ((secmask | firmask) & (1ULL << 3)) == 0) or (cachedpos == 12 and ((secmask | firmask) & (1ULL << 4)) == 0))
+                if(cachedpos == 3 or cachedpos == 4)
                     return (16384 * depth);
+                // if(cachedpos == 5 or cachedpos == 4 or cachedpos == 3 or cachedpos == 2 or (cachedpos == 11 and ((secmask | firmask) & (1ULL << 3)) == 0) or (cachedpos == 12 and ((secmask | firmask) & (1ULL << 4)) == 0))
+                //     return (16384 * depth);
                 if(cachedpos < 56){
                     if(position.secl & (1ULL << (cachedpos + 8)))
                         return (16384 * depth);
@@ -2832,11 +2837,22 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end()){
                 ttentry entry = it->second;
-                if(entry.score <= alpha)
-                    return alpha;
-                if(entry.flag) 
-                    return entry.score;
-                //beta = entry.score;
+                if(entry.notcutoff){
+                    if(entry.score <= alpha) //if current alpha >= cached alpha then the alpha during evaluation wont change, thus we can return the current alpha
+                        return alpha;
+                    if(entry.flag) //if the cached alpha is exact and it is bigger than the current alpha (because of the condition above) then we can return it
+                        return entry.score;
+                    beta = entry.score;
+                    //cached alpha is lower bound
+                }
+                else
+                {
+                    if(entry.score > alpha){
+                        if(entry.score >= beta)
+                            return entry.score;
+                        alpha = entry.score;
+                    }
+                }
             }
         }
         for(int i = 0; i < position.firlinkindex; ++i){
@@ -2852,8 +2868,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 ++temp.firlink;
                 int reschild = minimax(depth, alpha, beta, false, temp, cache);
                 if(reschild > alpha){
-                    if(beta <= reschild)
+                    if(beta <= reschild){
+                        if(depth > mincachedepth)
+                            cache[depth][position] = {reschild, false, false};
                         return reschild;
+                    }
                     alpha = reschild;
                 }
             }
@@ -2867,21 +2886,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     swap(temp.fir[i], temp.fir[4]);
                 int reschild = minimax(depth, alpha, beta, false, temp, cache);
                 if(reschild > alpha){
-                    if(beta <= reschild)
+                    if(beta <= reschild){
+                        if(depth > mincachedepth)
+                            cache[depth][position] = {reschild, false, false};
                         return reschild;
-                    alpha = reschild;
-                }
-            }
-            for(int i = 0; i < position.firlinkindex; ++i){
-                field temp = position;
-                temp.fir[i] |= 64;
-                temp.isboostavailablefir = false;
-                if(i > 0)
-                    swap(temp.fir[i], temp.fir[0]);
-                int reschild = minimax(depth, alpha, beta, false, temp, cache);
-                if(reschild > alpha){
-                    if(beta <= reschild)
-                        return reschild;
+                    }
                     alpha = reschild;
                 }
             }
@@ -2925,8 +2934,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -2937,8 +2949,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondvirus(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -2964,8 +2979,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -2976,8 +2994,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removesecondvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -2986,16 +3007,22 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             {
                                 int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                 if(reschild > alpha){
-                                    if(beta <= reschild)
+                                    if(beta <= reschild){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     alpha = reschild;
                                 }
                             }
                         }
                         int reschild = minimax(depth, alpha, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3019,8 +3046,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3033,8 +3063,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3045,8 +3078,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3070,8 +3106,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3084,8 +3123,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3096,8 +3138,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3121,8 +3166,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                             
@@ -3136,8 +3184,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3163,8 +3214,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3177,8 +3231,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3189,8 +3246,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
-                                    if(beta <= reschild)
+                                    if(beta <= reschild){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     alpha = reschild;
                                 }
                             }
@@ -3199,8 +3259,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3224,8 +3287,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3238,8 +3304,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3265,8 +3334,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3279,8 +3351,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3291,8 +3366,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
-                                    if(beta <= reschild)
+                                    if(beta <= reschild){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     alpha = reschild;
                                 }
                             }
@@ -3301,8 +3379,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3326,8 +3407,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3340,8 +3424,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3352,8 +3439,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3377,8 +3467,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3391,8 +3484,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3403,8 +3499,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3428,8 +3527,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3442,8 +3544,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3454,8 +3559,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                         t4 += 8;
@@ -3477,8 +3585,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removesecondlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3491,8 +3602,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                     if(reschild > alpha){
-                                        if(beta <= reschild)
+                                        if(beta <= reschild){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         alpha = reschild;
                                     }
                                 }
@@ -3503,8 +3617,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha + 1, beta, false, temptemp, cache);
                                 if(reschild > alpha){
-                                    if(beta <= reschild)
+                                    if(beta <= reschild){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     alpha = reschild;
                                 }
                             }
@@ -3512,6 +3629,23 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
+            else
+                for(int i = 0; i < position.firlinkindex; ++i){
+                    field temp = position;
+                    temp.fir[i] |= 64;
+                    temp.isboostavailablefir = false;
+                    if(i > 0)
+                        swap(temp.fir[i], temp.fir[0]);
+                    int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                    if(reschild > alpha){
+                        if(beta <= reschild){
+                            if(depth > mincachedepth)
+                                cache[depth][position] = {reschild, false, false};
+                            return reschild;
+                        }
+                        alpha = reschild;
+                    }
+                }
             for(int i = startvirus; i < position.firvirusindex; ++i){
                 const int t = (position.fir[i] & 7), t2 = position.fir[i];
                 int t4;
@@ -3531,8 +3665,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3545,8 +3682,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3557,8 +3697,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3576,8 +3719,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3590,8 +3736,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3602,8 +3751,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3621,8 +3773,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3635,8 +3790,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3647,8 +3805,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3666,8 +3827,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3680,8 +3844,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3692,8 +3859,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3718,8 +3888,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3732,8 +3905,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3744,8 +3920,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3763,8 +3942,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3777,8 +3959,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3789,8 +3974,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3808,8 +3996,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3822,8 +4013,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3834,8 +4028,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3853,8 +4050,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removesecondlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3867,8 +4067,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                             if(reschild > alpha){
-                                if(beta <= reschild)
+                                if(beta <= reschild){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 alpha = reschild;
                             }
                         }
@@ -3879,8 +4082,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha + 1, beta, false, temp, cache);
                         if(reschild > alpha){
-                            if(beta <= reschild)
+                            if(beta <= reschild){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             alpha = reschild;
                         }
                     }
@@ -3892,7 +4098,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             //todo
         }
         if(depth > mincachedepth)
-            cache[depth][position] = {alpha, (alpha > alphabeg) ? true : false};
+            cache[depth][position] = {alpha, (alpha > alphabeg) ? true : false, true};
         return alpha;
     }
     else
@@ -3967,8 +4173,10 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             if(position.sec[0] & 64){
                 const int cachedpos = (position.sec[0] & 63), t = (cachedpos & 7);
-                if(cachedpos == 58 or cachedpos == 59 or cachedpos == 60 or cachedpos == 61 or (cachedpos == 52 and ((firmask | secmask) & (1ULL << 60)) == 0) or (cachedpos == 51 and ((firmask | secmask) & (1ULL << 61)) == 0))
+                if(cachedpos == 59 or cachedpos == 60)
                     return (-16384 * depth);
+                // if(cachedpos == 58 or cachedpos == 59 or cachedpos == 60 or cachedpos == 61 or (cachedpos == 52 and ((firmask | secmask) & (1ULL << 60)) == 0) or (cachedpos == 51 and ((firmask | secmask) & (1ULL << 61)) == 0))
+                //     return (-16384 * depth);
                 if(cachedpos < 56){
                     if(position.firl & (1ULL << (cachedpos + 8)))
                         return (-16384 * depth);
@@ -4071,11 +4279,22 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end()){
                 ttentry entry = it->second;
-                if(entry.score >= beta)
-                    return beta;
-                if(entry.flag) 
-                    return entry.score;
-                //alpha = entry.score;
+                if(entry.notcutoff){
+                    if(entry.score >= beta) //if current beta <= cached beta then the beta during evaluation wont change, thus we can return the current beta
+                        return beta;
+                    if(entry.flag) //if the cached beta is exact and it is smaller than the current beta (because of the condition above) then we can return it
+                        return entry.score;
+                    alpha = entry.score;
+                    //cached beta is upper bound
+                }
+                else
+                {
+                    if(entry.score < beta){
+                        if(entry.score <= alpha)
+                            return entry.score;
+                        beta = entry.score;
+                    }
+                }
             }
         }
         for(int i = 0; i < position.seclinkindex; ++i){
@@ -4091,8 +4310,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 ++temp.seclink;
                 int reschild = minimax(depth, alpha, beta, true, temp, cache);
                 if(beta > reschild){
-                    if(reschild <= alpha)
+                    if(reschild <= alpha){
+                        if(depth > mincachedepth)
+                            cache[depth][position] = {reschild, false, false};
                         return reschild;
+                    }
                     beta = reschild;
                 }
             }
@@ -4106,21 +4328,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     swap(temp.sec[i], temp.sec[4]);
                 int reschild = minimax(depth, alpha, beta, true, temp, cache);
                 if(beta > reschild){
-                    if(reschild <= alpha)
+                    if(reschild <= alpha){
+                        if(depth > mincachedepth)
+                            cache[depth][position] = {reschild, false, false};
                         return reschild;
-                    beta = reschild;
-                }
-            }
-            for(int i = 0; i < position.seclinkindex; ++i){
-                field temp = position;
-                temp.sec[i] |= 64;
-                temp.isboostavailablesec = false;
-                if(i > 0)
-                    swap(temp.sec[i], temp.sec[0]);
-                int reschild = minimax(depth, alpha, beta, true, temp, cache);
-                if(beta > reschild){
-                    if(reschild <= alpha)
-                        return reschild;
+                    }
                     beta = reschild;
                 }
             }
@@ -4164,8 +4376,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4176,8 +4391,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstvirus(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4204,8 +4422,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4216,8 +4437,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removefirstvirus(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4226,16 +4450,22 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             {
                                 int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                 if(beta > reschild){
-                                    if(reschild <= alpha)
+                                    if(reschild <= alpha){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     beta = reschild;
                                 }
                             }
                         }
                         int reschild = minimax(depth, alpha, beta, true, temp, cache);
                         if(beta > reschild){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4259,8 +4489,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4273,8 +4506,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4285,8 +4521,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4310,8 +4549,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4324,8 +4566,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4336,8 +4581,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4361,8 +4609,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4375,8 +4626,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4402,8 +4656,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4416,8 +4673,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                     if(reschild < beta){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4428,8 +4688,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                 if(reschild < beta){
-                                    if(reschild <= alpha)
+                                    if(reschild <= alpha){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     beta = reschild;
                                 }
                             }
@@ -4438,8 +4701,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4463,8 +4729,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4477,8 +4746,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4504,8 +4776,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4518,8 +4793,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                     if(reschild < beta){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4530,8 +4808,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                 if(reschild < beta){
-                                    if(reschild <= alpha)
+                                    if(reschild <= alpha){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     beta = reschild;
                                 }
                             }
@@ -4540,8 +4821,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4565,8 +4849,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4579,8 +4866,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4591,8 +4881,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4616,8 +4909,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temptemp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4630,8 +4926,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4642,8 +4941,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4667,8 +4969,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(beta > reschild){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4681,8 +4986,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4693,8 +5001,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                         t4 -= 8;
@@ -4716,8 +5027,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     removefirstlink(temptemp, t4);
                                     int reschild = minimax(depth, alpha, beta, true, temptemp, cache);
                                     if(beta > reschild){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4730,8 +5044,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                     if(reschild > alpha and reschild < beta)
                                         reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                     if(reschild < beta){
-                                        if(reschild <= alpha)
+                                        if(reschild <= alpha){
+                                            if(depth > mincachedepth)
+                                                cache[depth][position] = {reschild, false, false};
                                             return reschild;
+                                        }
                                         beta = reschild;
                                     }
                                 }
@@ -4742,8 +5059,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if(reschild > alpha and reschild < beta)
                                     reschild = minimax(depth, alpha, beta - 1, true, temptemp, cache);
                                 if(reschild < beta){
-                                    if(reschild <= alpha)
+                                    if(reschild <= alpha){
+                                        if(depth > mincachedepth)
+                                            cache[depth][position] = {reschild, false, false};
                                         return reschild;
+                                    }
                                     beta = reschild;
                                 }
                             }
@@ -4751,6 +5071,23 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
+            else
+                for(int i = 0; i < position.seclinkindex; ++i){
+                    field temp = position;
+                    temp.sec[i] |= 64;
+                    temp.isboostavailablesec = false;
+                    if(i > 0)
+                        swap(temp.sec[i], temp.sec[0]);
+                    int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                    if(beta > reschild){
+                        if(reschild <= alpha){
+                            if(depth > mincachedepth)
+                                cache[depth][position] = {reschild, false, false};
+                            return reschild;
+                        }
+                        beta = reschild;
+                    }
+                }
             for(int i = startvirus; i < position.secvirusindex; ++i){
                 const int t = (position.sec[i] & 7), t2 = position.sec[i];
                 int t4;
@@ -4770,8 +5107,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4784,8 +5124,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4796,8 +5139,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4815,8 +5161,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4829,8 +5178,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4841,8 +5193,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4860,8 +5215,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4874,8 +5232,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4886,8 +5247,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4905,8 +5269,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4919,8 +5286,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4931,8 +5301,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -4957,8 +5330,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4971,8 +5347,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -4983,8 +5362,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -5002,8 +5384,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5016,8 +5401,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5028,8 +5416,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -5047,8 +5438,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5061,8 +5455,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5073,8 +5470,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -5092,8 +5492,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             removefirstlink(temp, t4);
                             int reschild = minimax(depth, alpha, beta, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5106,8 +5509,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                             if(reschild > alpha and reschild < beta)
                                 reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                             if(reschild < beta){
-                                if(reschild <= alpha)
+                                if(reschild <= alpha){
+                                    if(depth > mincachedepth)
+                                        cache[depth][position] = {reschild, false, false};
                                     return reschild;
+                                }
                                 beta = reschild;
                             }
                         }
@@ -5118,8 +5524,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                         if(reschild > alpha and reschild < beta)
                             reschild = minimax(depth, alpha, beta - 1, true, temp, cache);
                         if(reschild < beta){
-                            if(reschild <= alpha)
+                            if(reschild <= alpha){
+                                if(depth > mincachedepth)
+                                    cache[depth][position] = {reschild, false, false};
                                 return reschild;
+                            }
                             beta = reschild;
                         }
                     }
@@ -5132,7 +5541,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             //todo
         }
         if(depth > mincachedepth)
-            cache[depth][position] = {beta, (beta < betabeg) ? true : false};
+            cache[depth][position] = {beta, (beta < betabeg) ? true : false, true};
         return beta;
     }
 }
@@ -5368,10 +5777,9 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
-                vector<unordered_map<field, int, field>> newmoveorder(depth);
-                scores[i] = smartminimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, newmoveorder);
+                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
                 if(scores[i] > alpha)
-                    scores[i] = smartminimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, newmoveorder);
+                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
                 ++finished;
                 displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
@@ -5530,30 +5938,30 @@ int main(){
     // }
     //ofstream dump("results.txt");
     field pos;
-    // generatexfield(pos, true, 15);
-    // auto start = high_resolution_clock::now();
-    // for(int i = 0; i < 256; ++i){
-    //     if(__builtin_popcount(i) == 4){
-    //         generatexfield(pos, false, i); 
-    //         auto startit = high_resolution_clock::now();
-    //         pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
-    //         auto endit = high_resolution_clock::now();
-    //         cout << "\33[2K\r" << flush;
-    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-    //         //dump << move.second << endl;
-    //     }
-    // }
-    // auto end = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // return 1;
-    generatexfield(pos, true, rand() % 70);
-    generatexfield(pos, false, rand() % 70);
+    generatexfield(pos, true, 15);
+    auto start = high_resolution_clock::now();
+    for(int i = 0; i < 256; ++i){
+        if(__builtin_popcount(i) == 4){
+            generatexfield(pos, false, i); 
+            auto startit = high_resolution_clock::now();
+            pair<field, int> move = minimaxmain(14, -100000, 100000, true, pos);
+            auto endit = high_resolution_clock::now();
+            cout << "\33[2K\r" << flush;
+            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+            //dump << move.second << endl;
+        }
+    }
+    auto end = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(end - start).count() << endl;
+    return 1;
+    generatexfield(pos, true, indexes[rand() % 70]);
+    generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
     cout << endl;
     auto startm = high_resolution_clock::now();
     for(;;){
         auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(12, -1000000, 1000000, false, pos);
+        pair<field, int> move = minimaxmain(14, -1000000, 1000000, false, pos);
         auto end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
         //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
@@ -5577,8 +5985,8 @@ int main(){
         //     cout << pos.fir[i] << endl;
         // for(int i = 0; i < 8; ++i)
         //     cout << pos.sec[i] << endl;
-        //printfield(pos);
-        //cout << endl;
+        printfield(pos);
+        cout << endl;
         if(pos.seclink == 4){
             cout << "Player one wins! " << endl;
             printfield(pos);
@@ -5606,8 +6014,8 @@ int main(){
         //     cout << pos.fir[i] << endl;
         // for(int i = 0; i < 8; ++i)
         // //    cout << pos.sec[i] << endl;
-        //printfield(pos);
-        //cout << endl;
+        printfield(pos);
+        cout << endl;
         if(pos.firlink == 4){
             cout << "Player two wins! " << endl;
             printfield(pos);
