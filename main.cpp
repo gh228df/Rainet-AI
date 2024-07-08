@@ -5482,7 +5482,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5502,8 +5502,8 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         finished = 0;
         bool toterminate = false;
         int tscore; 
-        //cout << endl;
-        //cout << "D" << depth << " alpha: " << alpha << endl;
+        cout << endl;
+        cout << "D" << depth << " alpha: " << alpha << endl;
         auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
             threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &toterminate, &tscore]() {
@@ -5511,13 +5511,13 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] > alpha){
-                    //cout << "    >" << endl;
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, toterminate);
                 }
-                //else
-                //    cout << endl;
+                else
+                    cout << endl;
                 mtx.lock();
                 if(beta <= scores[i] and toterminate == false){
                     toterminate = true;
@@ -5525,13 +5525,13 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         auto end = high_resolution_clock::now();
-        //cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         if(toterminate)
             return tscore;
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5558,7 +5558,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5578,8 +5578,8 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         finished = 0;
         bool toterminate = false;
         int tscore;
-        //cout << endl;
-        //cout << "D" << depth << " beta: " << beta << endl;
+        cout << endl;
+        cout << "D" << depth << " beta: " << beta << endl;
         auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &toterminate, &tscore]() {
@@ -5587,13 +5587,13 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] < beta){
-                //    cout << "    >" << endl;
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache, toterminate);
                 }
-                //else
-                //    cout << endl;
+                else
+                    cout << endl;
                 mtx.lock();
                 if(scores[i] <= alpha and toterminate == false){
                     toterminate = true;
@@ -5601,13 +5601,13 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         auto end = high_resolution_clock::now();
-        //cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         if(toterminate)
             return tscore;
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5638,11 +5638,11 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
+                cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5656,17 +5656,15 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
-        start = high_resolution_clock::now();
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
-        end = high_resolution_clock::now();
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
         finished = 0;
-        //cout << endl;
-        //cout << "alpha: " << alpha << endl;
+        cout << endl;
+        cout << "alpha: " << alpha << endl;
         bool toterminate = false;
         start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5675,31 +5673,31 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] > alpha){
-                    //cout << "    >" << endl;
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, toterminate);
                 }
-                //else
-                //    cout << endl;
+                else
+                    cout << endl;
                 mtx.lock();
                 ++curfreethreads;
                 if(toterminate){
                     mtx.unlock();
                     scores[i] = minimaxscout(depth - 1, alpha, beta, false, allmoves[i]);
                 }
-                else if(allmoves.size() - curfreethreads == multifinish){
+                else if(allmoves.size() - curfreethreads == multifinish and duration_cast<milliseconds>(stop - start).count() > (800 * (1 << (depth - 12))) and depth > 11){
                     toterminate = true;
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         end = high_resolution_clock::now();
-        //cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         for(int i = 0; i < allmoves.size(); ++i){
             if(scores[i] > alpha){
                 alpha = scores[i];
@@ -5725,11 +5723,11 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
+                cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5743,18 +5741,15 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
-        start = high_resolution_clock::now();
         beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
-        end = high_resolution_clock::now();
-        //cout << "Predicted beta time: " << duration_cast<milliseconds>(end - start).count() << endl;
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
         finished = 0;
-        //cout << endl;
-        //cout << "beta: " << beta << endl;
+        cout << endl;
+        cout << "beta: " << beta << endl;
         bool toterminate = false;
         start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5763,31 +5758,31 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                //cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] < beta){
-                //    cout << "    >" << endl;
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache, toterminate);
                 }
-                //else
-                //    cout << endl;
+                else
+                    cout << endl;
                 mtx.lock();
                 ++curfreethreads;
                 if(toterminate){
                     mtx.unlock();
                     scores[i] = minimaxscout(depth - 1, alpha, beta, true, allmoves[i]);
                 }
-                else if(allmoves.size() - curfreethreads == multifinish){
+                else if(allmoves.size() - curfreethreads == multifinish and duration_cast<milliseconds>(stop - start).count() > (800 * (1 << (depth - 12))) and depth > 11){
                     toterminate = true;
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
         end = high_resolution_clock::now();
-        //cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         for(int i = 0; i < allmoves.size(); ++i){
             if(beta > scores[i]){
                 beta = scores[i];
@@ -5921,22 +5916,22 @@ int main(){
     }
     load.close();
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i); 
-            auto startit = high_resolution_clock::now();
-            pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
-            auto endit = high_resolution_clock::now();
-            cout << "\33[2K\r" << flush;
-            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-            //dump << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    return 0;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i); 
+    //         auto startit = high_resolution_clock::now();
+    //         pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
+    //         auto endit = high_resolution_clock::now();
+    //         cout << "\33[2K\r" << flush;
+    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //         //dump << move.second << endl;
+    //     }
+    // }
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    // return 0;
     generatexfield(pos, true, indexes[rand() % 70]);
     generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
