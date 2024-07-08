@@ -3592,7 +3592,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             //todo
         }
-        if(depth > mincachedepthfull)
+        if(depth > mincachedepthfull and terminate == false)
             cache[depth][position] = {alpha, (alpha > alphabeg) ? true : false, true};
         return alpha;
     }
@@ -5129,11 +5129,13 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             //todo
         }
-        if(depth > mincachedepthfull)
+        if(depth > mincachedepthfull and terminate == false)
             cache[depth][position] = {beta, (beta < betabeg) ? true : false, true};
         return beta;
     }
 }
+
+const int multifinish = 2;
 
 int curfreethreads;
 
@@ -5145,6 +5147,142 @@ void displayProgressBar(const double total, const double finished, const string&
 }
 
 /*
+int minimaxlayer(int depth, int alpha, int beta, const bool player, field &position, vector<unordered_map<field, ttentry, field>> &cache, bool &terminate, int &index){
+    if(player){
+        vector<field> allmoves = possiblemoves(position, true);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].firlink > 3)
+                return (16384 * depth);
+        for(; index < allmoves.size(); ++index){
+            int childres;
+            if(alpha > MIN){
+                childres = minimax(depth - 1, alpha, alpha + 1, false, allmoves[index], cache, terminate);
+                if(childres > alpha)
+                    childres = minimax(depth - 1, childres, beta, false, allmoves[index], cache, terminate);
+            }
+            else
+                childres = minimax(depth - 1, alpha, beta, false, allmoves[index], cache, terminate);
+            if(terminate)
+                return alpha;
+            if(childres > alpha){
+                if(beta <= childres)
+                    return childres;
+                alpha = childres;
+            }
+        }
+        return alpha;
+    }
+    else
+    {
+        vector<field> allmoves = possiblemoves(position, false);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].seclink > 3)
+                return (-16384 * depth);
+        for(; index < allmoves.size(); ++index){
+            int childres;
+            if(beta < MAX){
+                childres = minimax(depth - 1, beta - 1, beta, true, allmoves[index], cache, terminate);
+                if(childres < beta)
+                    childres = minimax(depth - 1, alpha, childres, true, allmoves[index], cache, terminate);
+            }
+            else
+                childres = minimax(depth - 1, alpha, beta, true, allmoves[index], cache, terminate);
+            if(terminate)
+                return beta;
+            if(childres < beta){
+                if(childres <= alpha)
+                    return childres;
+                beta = childres;
+            }
+        }
+        return beta;
+    }
+}
+
+mutex conc;
+
+int concurrentminimax(int depth, int alpha, int beta, const bool player, field &position){
+    cout << "foijwejfoiwejowe" << endl;
+    if(player){
+        vector<field> allmoves = possiblemoves(position, true);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].firlink > 3)
+                return (16384 * depth);
+        vector<thread> threads(allmoves.size());
+        vector<int> scores(allmoves.size());
+        int tscore;
+        bool toterminate = false;
+        for(int i = 0; i < allmoves.size(); ++i){
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &tscore, &toterminate]() {
+                vector<unordered_map<field, ttentry, field>> newcache(depth);
+                if(alpha > MIN){
+                    scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, toterminate);
+                    if(scores[i] > alpha)
+                        scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, toterminate);
+                }
+                else
+                    scores[i] = minimax(depth - 1, alpha, beta, false, allmoves[i], newcache, toterminate);
+                conc.lock();
+                if(beta <= scores[i] and toterminate == false){
+                    toterminate = true;
+                    tscore = scores[i];
+                }
+                conc.unlock();
+            });
+        }
+        for(int i = 0; i < allmoves.size(); ++i)
+            threads[i].join();
+        if(toterminate)
+            return tscore;
+        for(int i = 0; i < allmoves.size(); ++i){
+            if(scores[i] > alpha){
+                alpha = scores[i];
+            }
+        }
+        return alpha;
+    }
+    else
+    {
+        vector<field> allmoves = possiblemoves(position, false);
+        for(int i = 0; i < allmoves.size(); ++i)
+            if(allmoves[i].seclink > 3)
+                return (-16384 * depth);
+        vector<thread> threads(allmoves.size());
+        vector<int> scores(allmoves.size());
+        int tscore;
+        bool toterminate = false;
+        for(int i = 0; i < allmoves.size(); ++i){
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &tscore, &toterminate]() {
+                vector<unordered_map<field, ttentry, field>> newcache(depth);
+                if(beta < MAX){
+                    scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache, toterminate);
+                    if(scores[i] < beta)
+                        scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache, toterminate);
+                }
+                else
+                    scores[i] = minimax(depth - 1, alpha, beta, true, allmoves[i], newcache, toterminate);
+                conc.lock();
+                if(scores[i] <= alpha and toterminate == false){
+                    toterminate = true;
+                    tscore = scores[i];
+                }
+                conc.unlock();
+            });
+        }
+        for(int i = 0; i < allmoves.size(); ++i)
+            threads[i].join();
+        if(toterminate)
+            return tscore;
+        for(int i = 0; i < allmoves.size(); ++i){
+            if(beta > scores[i]){
+                beta = scores[i];
+            }
+        }
+        return beta;
+    }
+}
+
+
 int smartminimax(const int depth, int alpha, int beta, const bool player, field &position, vector<unordered_map<field, ttentry, field>> &cache){
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
@@ -5341,8 +5479,10 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 bool toterminate = false;
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache, toterminate);
+                mtx.lock();
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5361,23 +5501,37 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         scores.erase(scores.begin());
         finished = 0;
         bool toterminate = false;
-        int tscore;
+        int tscore; 
+        cout << endl;
+        cout << "D" << depth << " alpha: " << alpha << endl;
+        auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
             threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &toterminate, &tscore]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
+                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, toterminate);
-                if(scores[i] > alpha)
+                auto stop = high_resolution_clock::now();
+                cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
+                if(scores[i] > alpha){
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, toterminate);
+                }
+                else
+                    cout << endl;
+                mtx.lock();
                 if(beta <= scores[i] and toterminate == false){
                     toterminate = true;
                     tscore = scores[i];
                 }
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
+        auto end = high_resolution_clock::now();
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         if(toterminate)
             return tscore;
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5401,8 +5555,10 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 bool toterminate = false;
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache, toterminate);
+                mtx.lock();
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5422,22 +5578,36 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         finished = 0;
         bool toterminate = false;
         int tscore;
+        cout << endl;
+        cout << "D" << depth << " beta: " << beta << endl;
+        auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &toterminate, &tscore]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
+                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache, toterminate);
-                if(scores[i] < beta)
+                auto stop = high_resolution_clock::now();
+                cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
+                if(scores[i] < beta){
+                    cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache, toterminate);
+                }
+                else
+                    cout << endl;
+                mtx.lock();
                 if(scores[i] <= alpha and toterminate == false){
                     toterminate = true;
                     tscore = scores[i];
                 }
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
+        auto end = high_resolution_clock::now();
+        cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         if(toterminate)
             return tscore;
         for(int i = 0; i < allmoves.size(); ++i){
@@ -5457,21 +5627,27 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].firlink > 3)
                 return make_pair(allmoves[i], (16384 * depth));
-        auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
+        auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
             threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 bool toterminate = false;
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
+                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache, toterminate);
+                auto stop = high_resolution_clock::now();
+                cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
+                mtx.lock();
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
+        auto end = high_resolution_clock::now();
         int max = scores[0], index = 0;
         for(int i = 1; i < allmoves.size(); ++i){
             if(scores[i] > max){
@@ -5480,8 +5656,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        auto end = high_resolution_clock::now();
-        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
         start = high_resolution_clock::now();
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
@@ -5500,16 +5675,23 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                cout << "Scout time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] > alpha){
                     cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache, toterminate);
                 }
                 else
                     cout << endl;
-                ++finished;
                 mtx.lock();
                 ++curfreethreads;
+                if(toterminate){
+                    mtx.unlock();
+                    scores[i] = minimaxscout(depth - 1, scores[i], beta, false, allmoves[i]);
+                }
+                else if(allmoves.size() - curfreethreads == multifinish){
+                    toterminate = true;
+                }
+                ++finished;
                 mtx.unlock();
                 //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
@@ -5532,21 +5714,27 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         for(int i = 0; i < allmoves.size(); ++i)
             if(allmoves[i].seclink > 3)
                 return make_pair(allmoves[i], (-16384 * depth));
-        auto start = high_resolution_clock::now();
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
         int finished = 0;
+        auto start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
 			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
                 bool toterminate = false;
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
+                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache, toterminate);
+                auto stop = high_resolution_clock::now();
+                cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
+                mtx.lock();
                 ++finished;
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
+                mtx.unlock();
+                //displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
+        auto end = high_resolution_clock::now();
         int min = scores[0], index = 0;
         for(int i = 1; i < allmoves.size(); ++i){
             if(scores[i] < min){
@@ -5555,8 +5743,7 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        auto end = high_resolution_clock::now();
-        //cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+        cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
         start = high_resolution_clock::now();
         beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
@@ -5567,15 +5754,16 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         scores.erase(scores.begin());
         finished = 0;
         cout << endl;
+        cout << "beta: " << beta << endl;
+        bool toterminate = false;
         start = high_resolution_clock::now();
         for(int i = 0; i < allmoves.size(); ++i){
-			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]() {
-                bool toterminate = false;
+			threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &toterminate]() {
                 vector<unordered_map<field, ttentry, field>> newcache(depth);
                 auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache, toterminate);
                 auto stop = high_resolution_clock::now();
-                cout << "Scout time: " << duration_cast<milliseconds>(stop - start).count();
+                cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
                 if(scores[i] < beta){
                     cout << "    >" << endl;
                     scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache, toterminate);
@@ -5584,8 +5772,15 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
                     cout << endl;
                 mtx.lock();
                 ++curfreethreads;
-                mtx.unlock();
+                if(toterminate){
+                    mtx.unlock();
+                    scores[i] = minimaxscout(depth - 1, alpha, scores[i], true, allmoves[i]);
+                }
+                else if(allmoves.size() - curfreethreads == multifinish){
+                    toterminate = true;
+                }
                 ++finished;
+                mtx.unlock();
                 //displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 ");
             });
         }
@@ -5713,25 +5908,35 @@ int main(){
         for(int i = 0; i < size; ++i){
 			cout << i << ") " << speed[i] << "  " << pl[i] << endl;
 		}
+        int sel;
+        cin >> sel;
+        if(sel > -1 and sel < size){
+            auto start = high_resolution_clock::now();
+            pair<field, int> move = minimaxmain(14, MIN, MAX, pl[sel], todump[sel]);
+            auto end = high_resolution_clock::now();
+            cout << "\33[2K\r" << flush;
+            cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+            return 0;
+        }
     }
     load.close();
     field pos;
-    // generatexfield(pos, true, 15);
-    // auto start = high_resolution_clock::now();
-    // for(int i = 0; i < 256; ++i){
-    //     if(__builtin_popcount(i) == 4){
-    //         generatexfield(pos, false, i); 
-    //         auto startit = high_resolution_clock::now();
-    //         pair<field, int> move = minimaxmain(16, MIN, MAX, true, pos);
-    //         auto endit = high_resolution_clock::now();
-    //         cout << "\33[2K\r" << flush;
-    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-    //         //dump << move.second << endl;
-    //     }
-    // }
-    // auto end = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // return 0;
+    generatexfield(pos, true, 15);
+    auto start = high_resolution_clock::now();
+    for(int i = 0; i < 256; ++i){
+        if(__builtin_popcount(i) == 4){
+            generatexfield(pos, false, i); 
+            auto startit = high_resolution_clock::now();
+            pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
+            auto endit = high_resolution_clock::now();
+            cout << "\33[2K\r" << flush;
+            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+            //dump << move.second << endl;
+        }
+    }
+    auto end = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(end - start).count() << endl;
+    return 0;
     generatexfield(pos, true, indexes[rand() % 70]);
     generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
