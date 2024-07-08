@@ -5667,6 +5667,14 @@ Secwinrate = 0.222245
     }
 }
 */
+
+inline bool isunique(field &toadd, vector<field> &array){
+	for(int i = 0; i < array.size(); ++i)
+		if(toadd == array[i])
+			return false;
+	return true;
+}
+
 int main(){
     //465344
     //srand(time(NULL));
@@ -5687,6 +5695,7 @@ int main(){
     ifstream load("analyze.bin", ios::binary);
     vector<field> todump;
     vector<int> speed;
+    vector<bool> pl;
     if(load){
         int size;
         load.read(reinterpret_cast<char*>(&size), sizeof(int));
@@ -5697,10 +5706,15 @@ int main(){
             int temp;
             load.read(reinterpret_cast<char*>(&temp), sizeof(int));
             speed.push_back(temp);
+            bool tempb;
+            load.read(reinterpret_cast<char*>(&tempb), sizeof(bool));
+            pl.push_back(tempb);
         }
+        for(int i = 0; i < size; ++i){
+			cout << i << ") " << speed[i] << "  " << pl[i] << endl;
+		}
     }
     load.close();
-    ofstream dump("analyze.bin", ios::binary);
     field pos;
     // generatexfield(pos, true, 15);
     // auto start = high_resolution_clock::now();
@@ -5725,18 +5739,25 @@ int main(){
     auto startm = high_resolution_clock::now();
     for(;;){
         auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(14, -1000000, 1000000, false, pos);
+        pair<field, int> move = minimaxmain(14, MIN, MAX, false, pos);
         auto end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
         //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        todump.push_back(move.first);
-        int size = todump.size();
-        dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
-        for(int i = 0; i < size; ++i)
-            dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
-        size = duration_cast<milliseconds>(end - start).count();
-        dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+        if(isunique(pos, todump)){
+			ofstream dump("analyze.bin", ios::binary);
+			todump.push_back(pos);
+			speed.push_back(duration_cast<milliseconds>(end - start).count());
+			pl.push_back(false);
+			int size = todump.size();
+			dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+			for(int i = 0; i < size; ++i){
+				dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
+				dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
+				bool t = pl[i];
+				dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
+			}
+		}
         pos = move.first; 
         // vector<field> allmoves = possiblemoves(pos, false);
         // for(int i = 0; i < allmoves.size(); ++i){
@@ -5769,18 +5790,25 @@ int main(){
             break;
         }
         start = high_resolution_clock::now();
-        move = minimaxmain(14, -1000000, 1000000, true, pos);
+        move = minimaxmain(14, MIN, MAX, true, pos);
         end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
         //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        todump.push_back(move.first);
-        size = todump.size();
-        dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
-        for(int i = 0; i < size; ++i)
-            dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
-        size = duration_cast<milliseconds>(end - start).count();
-        dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+        if(isunique(pos, todump)){
+			ofstream dump("analyze.bin", ios::binary);
+			todump.push_back(pos);
+			speed.push_back(duration_cast<milliseconds>(end - start).count());
+			pl.push_back(true);
+			int size = todump.size();
+			dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+			for(int i = 0; i < size; ++i){
+				dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
+				dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
+				bool t = pl[i];
+				dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
+			}
+		}
         pos = move.first;
         // cout << pos.firl << endl;
         // cout << pos.firv << endl;
