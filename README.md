@@ -46,6 +46,13 @@ The position analysis is a multi-pass process that ensures optimal performance:
 2. **Recursive Analysis**: The selected best move is recursively analyzed, starting with all moves at a reduced depth and then applying the minimax scout algorithm to explore positions with full depth in parallel. This approach eliminates unoptimized alpha/beta calculations and accelerates the analysis process.
 3. **Final Pass**: The main minimax function analyzes all remaining positions using the minimax scout algorithm in parallel, ensuring optimal performance. Additionally, it detects and handles stalling threads, recalculating them as needed.
 
-**Conclusion**
+**Future Development**
 ============
-This Rainet Access Battlers AI project demonstrates a sophisticated approach to analyzing game positions using the minimax algorithm. While there are limitations and areas for improvement, the project aims to provide optimal performance despite the complexity of the game. I welcome contributions and suggestions to further enhance the AI's capabilities.
+* The performance could be improved, like the memory usage and caching algorithm.
+* Better analysis for a given position with all cards covered
+
+While there are limitations and areas for improvement, this project aims to provide optimal performance despite the complexity of the game. 
+
+**Contribution**
+---------------------
+I welcome contributions and suggestions to further enhance the AI's capabilities.
