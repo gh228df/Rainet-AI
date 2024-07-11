@@ -47,7 +47,7 @@ The position analysis is a multi-pass process that ensures optimal performance:
 3. **Final Pass**: The main minimax function analyzes all remaining positions using the minimax scout algorithm in parallel, ensuring optimal performance. Additionally, it detects and handles stalling threads, recalculating them as needed.
 
 **Future Development**
-============
+---------------------
 * The performance could be improved, like the memory usage and caching algorithm.
 * Better analysis for a given position with all cards covered
 
