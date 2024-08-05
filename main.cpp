@@ -595,668 +595,1090 @@ inline void removefirstvirus(field &position, const int &coords){
     }
 }
 
-vector<field> possiblemoves(const field &position, const bool player){
+vector<field> possiblemoves(field &position, const bool player){
     vector<field> nplusone;
     nplusone.reserve(40);
     if(player){
-        for(int i = 0; i < position.firlinkindex; ++i){
-            const int t2 = (position.fir[i] & 63);
-            if(t2 == 3 or t2 == 4){
-                field temp = position;
-                if(position.fir[i] & 64)
-                    temp.isboostavailablefir = true;
-                --temp.firlinkindex;
-                temp.fir[i] = temp.fir[temp.firlinkindex];
-                temp.fir[temp.firlinkindex] = 0;
-                temp.firl ^= (1ULL << t2);
-                ++temp.firlink;
-                nplusone.push_back(temp);
+        if(__builtin_expect(position.firl & 24, 0)){
+            __builtin_assume(position.firlinkindex > 0 and position.firlinkindex < 5);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.firlinkindex; ++i){
+                const int t2 = (position.fir[i] & 63);
+                if(t2 == 3 or t2 == 4){
+                    field temp = position;
+                    if(position.fir[i] & 64)
+                        temp.isboostavailablefir = true;
+                    --temp.firlinkindex;
+                    temp.fir[i] = temp.fir[temp.firlinkindex];
+                    temp.fir[temp.firlinkindex] = 0;
+                    temp.firl ^= (1ULL << t2);
+                    ++temp.firlink;
+                    nplusone.push_back(temp);
+                }
             }
         }
         if(position.isboostavailablefir){
+            __builtin_assume(position.firvirusindex >= 4 and position.firvirusindex <= 8);
+            #pragma clang loop unroll_count(4)
             for(int i = 4; i < position.firvirusindex; ++i){
-                field temp = position;
-                temp.fir[i] |= 64;
-                temp.isboostavailablefir = false;
-                if(i > 4)
-                    swap(temp.fir[i], temp.fir[4]);
-                nplusone.push_back(temp);
+                position.fir[i] ^= 64;
+                position.isboostavailablefir = false;
+                int reschild;
+                if(i > 4){
+                    swap(position.fir[i], position.fir[4]);
+                    nplusone.push_back(position);
+                    swap(position.fir[i], position.fir[4]);
+                }
+                else
+                    nplusone.push_back(position);
+                position.fir[i] ^= 64;
+                position.isboostavailablefir = true;
+            }
+            __builtin_assume(position.firlinkindex >= 0 and position.firlinkindex <= 4);
+            #pragma clang loop unroll_count(4)
+            for(int i = 0; i < position.firlinkindex; ++i){
+                position.fir[i] ^= 64;
+                position.isboostavailablefir = false;
+                int reschild;
+                if(i > 0){
+                    swap(position.fir[i], position.fir[0]);
+                    nplusone.push_back(position);
+                    swap(position.fir[i], position.fir[0]);
+                }
+                else
+                    nplusone.push_back(position);
+                position.fir[i] ^= 64;
+                position.isboostavailablefir = true;
             }
         }
         const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
         if(firewallsec < 0){
-            int startlink = 0, startvirus = 4;
             if(position.isboostavailablefir == false){
                 int i;
-                if(position.fir[0] & 64){
-                    ++startlink;
+                if(position.fir[0] & 64)
                     i = 0;
-                }
-                else{
-                    ++startvirus;
-                    i = 4;
-                }
-                const int t = (position.fir[i] & 7), t2 = (position.fir[i] & 63);
-                int t4;
-                field nmove = position;
-                if(i == 0)
-                    nmove.firl ^= (1ULL << t2);
                 else
-                    nmove.firv ^= (1ULL << t2);
-                t4 = t2 - 8;
-                if(t2 > 7 and (firmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.fir[i] -= 8;
-                        temp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.fir[i] -= 8;
-                        temp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temp.secl & (1ULL << (t4))){
-                            ++temp.firlink;
-                            temp.secl ^= (1ULL << (t4));
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                    i = 4;
+                const int coords = (position.fir[i] & 63), x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
+                if(mshift >> 8){
+                    uint64_t shiftconst = (mshift >> 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firlink;
+                                temp.secl ^= shiftconst;
+                                removesecondlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firvirus;
+                                temp.secv ^= shiftconst;
+                                removesecondvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        t4 -= 8;
-                        if(t2 > 15 and (firmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.fir[i] -= 16;
-                                temptemp.firl |= (1ULL << (t4));
-                            }
-                            else
-                            {
-                                temptemp.fir[i] -= 16;
-                                temptemp.firv |= (1ULL << (t4));
-                            }
-                            if(secmask & (1ULL << (t4))){
-                                if(temptemp.secl & (1ULL << (t4))){
-                                    ++temptemp.firlink;
-                                    temptemp.secl ^= (1ULL << (t4));
-                                    removesecondlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            if(mshift >> 16){
+                                uint64_t shiftconstsec = (mshift >> 16);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 16;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 16;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 16;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 16;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
                                 }
-                                else if(temptemp.firvirus < 3)
-                                {
-                                    ++temptemp.firvirus;
-                                    temptemp.secv ^= (1ULL << (t4));
-                                    removesecondvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            }
+                            position.fir[i] -= 8;
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            position.fir[i] += 8;
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            if(x < 7){
+                                uint64_t shiftconstsec = (mshift >> 7);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
-                            {
-                                nplusone.push_back(temptemp);
+                            if(x > 0){
+                                uint64_t shiftconstsec = (mshift >> 9);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
                             }
                         }
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 = t2 - 7;
-                if(t2 > 7 and (firmask & (1ULL << (t4))) == 0 and t < 7){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.fir[i] -= 7;
-                        temptemp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.fir[i] -= 7;
-                        temptemp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temptemp.secl & (1ULL << (t4))){
-                            ++temptemp.firlink;
-                            temptemp.secl ^= (1ULL << (t4));
-                            removesecondlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.firvirus < 3)
-                        {
-                            ++temptemp.firvirus;
-                            temptemp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 - 9;
-                if(t2 > 7 and (firmask & (1ULL << (t4))) == 0 and t > 0){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.fir[i] -= 9;
-                        temptemp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.fir[i] -= 9;
-                        temptemp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temptemp.secl & (1ULL << (t4))){
-                            ++temptemp.firlink;
-                            temptemp.secl ^= (1ULL << (t4));
-                            removesecondlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.firvirus < 3)
-                        {
-                            ++temptemp.firvirus;
-                            temptemp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 + 1;
-                if(t < 7 and (firmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.fir[i]++;
-                        temp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.fir[i]++;
-                        temp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temp.secl & (1ULL << (t4))){
-                            ++temp.firlink;
-                            temp.secl ^= (1ULL << (t4));
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
-                            
-                        }
-                        else if(temp.firvirus < 3)
-                        {
-                            ++temp.firvirus;
-                            temp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        ++t4;
-                        if(t < 6 and (firmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.fir[i] += 2;
-                                temptemp.firl |= (1ULL << (t4));
+                if(x < 7){
+                    uint64_t shiftconst = (mshift << 1);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                ++temp.fir[i];
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firlink;
+                                temp.secl ^= shiftconst;
+                                removesecondlink(temp, coords + 1);
+                                nplusone.push_back(temp);
                             }
-                            else
+                            else if(position.firvirus < 3)
                             {
-                                temptemp.fir[i] += 2;
-                                temptemp.firv |= (1ULL << (t4));
+                                field temp = position;
+                                ++temp.fir[i];
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firvirus;
+                                temp.secv ^= shiftconst;
+                                removesecondvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
                             }
-                            if(secmask & (1ULL << (t4))){
-                                if(temptemp.secl & (1ULL << (t4))){
-                                    ++temptemp.firlink;
-                                    temptemp.secl ^= (1ULL << (t4));
-                                    removesecondlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.firvirus < 3)
-                                {
-                                    ++temptemp.firvirus;
-                                    temptemp.secv ^= (1ULL << (t4));
-                                    removesecondvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                        }
+                        else
+                        {
+                            if(x < 6){
+                                uint64_t shiftconstsec = (mshift << 2);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 2;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 2;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 2;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 2;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
+                            ++position.fir[i];
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
                             else
-                            {
-                                nplusone.push_back(temptemp);
-                            }
-                        }
-                        nplusone.push_back(temp);
-                    }
-                }
-                t4 = t2 - 1;
-                if(t > 0 and (firmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.fir[i]--;
-                        temp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.fir[i]--;
-                        temp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temp.secl & (1ULL << (t4))){
-                            ++temp.firlink;
-                            temp.secl ^= (1ULL << (t4));
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                        else if(temp.firvirus < 3)
-                        {
-                            ++temp.firvirus;
-                            temp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        --t4;
-                        if(t > 1 and (firmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.fir[i] -= 2;
-                                temptemp.firl |= (1ULL << (t4));
-                            }
+                                position.firv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            --position.fir[i];
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
                             else
-                            {
-                                temptemp.fir[i] -= 2;
-                                temptemp.firv |= (1ULL << (t4));
-                            }
-                            if(secmask & (1ULL << (t4))){
-                                if(temptemp.secl & (1ULL << (t4))){
-                                    ++temptemp.firlink;
-                                    temptemp.secl ^= (1ULL << (t4));
-                                    removesecondlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.firvirus < 3)
-                                {
-                                    ++temptemp.firvirus;
-                                    temptemp.secv ^= (1ULL << (t4));
-                                    removesecondvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                                position.firv ^= (mshift | shiftconst);
+                            if((firmask & (mshift >> 8)) or (secmask & (mshift >> 8))){
+                                uint64_t shiftconstsec = (mshift >> 7);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
-                            {
-                                nplusone.push_back(temptemp);
-                            }
-                        }
-                        nplusone.push_back(temp);
-                    }
-                }
-                t4 = t2 + 9;
-                if(t2 < 56 and (firmask & (1ULL << (t4))) == 0 and t < 7){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.fir[i] += 9;
-                        temptemp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.fir[i] += 9;
-                        temptemp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temptemp.secl & (1ULL << (t4))){
-                            ++temptemp.firlink;
-                            temptemp.secl ^= (1ULL << (t4));
-                            removesecondlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.firvirus < 3)
-                        {
-                            ++temptemp.firvirus;
-                            temptemp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 + 7;
-                if(t2 < 56 and (firmask & (1ULL << (t4))) == 0 and t > 0){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.fir[i] += 7;
-                        temptemp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.fir[i] += 7;
-                        temptemp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << (t4))){
-                        if(temptemp.secl & (1ULL << (t4))){
-                            ++temptemp.firlink;
-                            temptemp.secl ^= (1ULL << (t4));
-                            removesecondlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.firvirus < 3)
-                        {
-                            ++temptemp.firvirus;
-                            temptemp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 + 8;
-                if(t2 < 56 and (firmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.fir[i] += 8;
-                        temp.firl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.fir[i] += 8;
-                        temp.firv |= (1ULL << (t4));
-                    }
-                    if(secmask & (1ULL << t4)){
-                        if(temp.secl & (1ULL << (t4))){
-                            ++temp.firlink;
-                            temp.secl ^= (1ULL << (t4));
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                        else if(temp.firvirus < 3)
-                        {
-                            ++temp.firvirus;
-                            temp.secv ^= (1ULL << (t4));
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
-                        t4 += 8;
-                        if(t2 < 48 and (firmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.fir[i] += 16;
-                                temptemp.firl |= (1ULL << (t4));
-                            }
-                            else
-                            {
-                                temptemp.fir[i] += 16;
-                                temptemp.firv |= (1ULL << (t4));
-                            }
-                            if(secmask & (1ULL << (t4))){
-                                if(temptemp.secl & (1ULL << (t4))){
-                                    ++temptemp.firlink;
-                                    temptemp.secl ^= (1ULL << (t4));
-                                    removesecondlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.firvirus < 3)
-                                {
-                                    ++temptemp.firvirus;
-                                    temptemp.secv ^= (1ULL << (t4));
-                                    removesecondvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            if((firmask & (mshift << 8)) or (secmask & (mshift << 8))){
+                                uint64_t shiftconstsec = (mshift << 9);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
+                        }
+                    }
+                }
+                if(x > 0){
+                    uint64_t shiftconst = (mshift >> 1);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                --temp.fir[i];
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firlink;
+                                temp.secl ^= shiftconst;
+                                removesecondlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
                             {
-                                nplusone.push_back(temptemp);
+                                field temp = position;
+                                --temp.fir[i];
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firvirus;
+                                temp.secv ^= shiftconst;
+                                removesecondvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                        }
+                        else
+                        {
+                            if(x > 1){
+                                uint64_t shiftconstsec = (mshift >> 2);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 2;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 2;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 2;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 2;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            --position.fir[i];
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            ++position.fir[i];
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            if((firmask & (mshift >> 8)) or (secmask & (mshift >> 8))){
+                                uint64_t shiftconstsec = (mshift >> 9);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] -= 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] -= 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] -= 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] += 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if((firmask & (mshift << 8)) or (secmask & (mshift << 8))){
+                                uint64_t shiftconstsec = (mshift << 7);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if(mshift << 8){
+                    uint64_t shiftconst = (mshift << 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firlink;
+                                temp.secl ^= shiftconst;
+                                removesecondlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                if(i == 0)
+                                    temp.firl ^= (mshift | shiftconst);
+                                else
+                                    temp.firv ^= (mshift | shiftconst);
+                                ++temp.firvirus;
+                                temp.secv ^= shiftconst;
+                                removesecondvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                        }
+                        else
+                        {
+                            position.fir[i] += 8;
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            position.fir[i] -= 8;
+                            if(i == 0)
+                                position.firl ^= (mshift | shiftconst);
+                            else
+                                position.firv ^= (mshift | shiftconst);
+                            if(x < 7){
+                                uint64_t shiftconstsec = (mshift << 9);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 9;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 9;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if(x > 0){
+                                uint64_t shiftconstsec = (mshift << 7);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 7;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 7;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if(mshift << 16){
+                                uint64_t shiftconstsec = (mshift << 16);
+                                if((firmask & shiftconstsec) == 0){
+                                    if(secmask & shiftconstsec){
+                                        if(position.secl & shiftconstsec){
+                                            field temp = position;
+                                            temp.fir[i] += 16;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firlink;
+                                            temp.secl ^= shiftconstsec;
+                                            removesecondlink(temp, coords + 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.firvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.fir[i] += 16;
+                                            if(i == 0)
+                                                temp.firl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.firv ^= (mshift | shiftconstsec);
+                                            ++temp.firvirus;
+                                            temp.secv ^= shiftconstsec;
+                                            removesecondvirus(temp, coords + 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.fir[i] += 16;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.fir[i] -= 16;
+                                        if(i == 0)
+                                            position.firl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.firv ^= (mshift | shiftconstsec);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            else
-                for(int i = 0; i < position.firlinkindex; ++i){
-                    field temp = position;
-                    temp.fir[i] |= 64;
-                    temp.isboostavailablefir = false;
-                    if(i > 0)
-                        swap(temp.fir[i], temp.fir[0]);
-                    nplusone.push_back(temp);
-                }
-            for(int i = startvirus; i < position.firvirusindex; ++i){
-                const int t = (position.fir[i] & 7), t2 = position.fir[i];
-                int t4;
+            __builtin_assume(position.firvirusindex >= 4 and position.firvirusindex <= 8);
+            for(int i = 4 + ((position.fir[4] >> 6) & 1); i < position.firvirusindex; ++i){
+                const int coords = position.fir[i], x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
-                field nmove = position;
-                nmove.firv ^= (1ULL << t2);
-                t4 = t2 - 8; //t2 - 8
-                shiftconst = (1ULL << t4);
-                if(t2 > 7 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i] -= 8;
-                    temp.firv |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift >> 8){
+                    shiftconst = (mshift >> 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.fir[i] -= 8;
+                            position.firv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.fir[i] += 8;
+                            position.firv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 += 9; //t2 + 1
-                shiftconst = (1ULL << t4);
-                if(t < 7 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i]++;
-                    temp.firv |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x < 7){
+                    shiftconst = (mshift << 1);
+                    if(x < 7 and (firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                ++temp.fir[i];
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                ++temp.fir[i];
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            ++position.fir[i];
+                            position.firv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            --position.fir[i];
+                            position.firv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 2; //t2 - 1
-                shiftconst = (1ULL << t4);
-                if(t > 0 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i]--;
-                    temp.firv |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x > 0){
+                    shiftconst = (mshift >> 1);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                --temp.fir[i];
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                --temp.fir[i];
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            --position.fir[i];
+                            position.firv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            ++position.fir[i];
+                            position.firv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 += 9; //t2 + 8
-                shiftconst = (1ULL << t4);
-                if(t2 < 56 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i] += 8;
-                    temp.firv |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift << 8){
+                    shiftconst = (mshift << 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                temp.firv ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.fir[i] += 8;
+                            position.firv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.fir[i] -= 8;
+                            position.firv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
             }
-            for(int i = startlink; i < position.firlinkindex; ++i){
-                const int t = (position.fir[i] & 7), t2 = position.fir[i];
-                int t4;
+            __builtin_assume(position.firlinkindex >= 0 and position.firlinkindex <= 4);
+            for(int i = ((position.fir[0] >> 6) & 1); i < position.firlinkindex; ++i){
+                const int coords = position.fir[i], x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
-                field nmove = position;
-                nmove.firl ^= (1ULL << t2);
-                t4 = t2 - 8; //t2 - 8
-                shiftconst = (1ULL << t4);
-                if(t2 > 7 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i] -= 8;
-                    temp.firl |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift >> 8){
+                    shiftconst = (mshift >> 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] -= 8;
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.fir[i] -= 8;
+                            position.firl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.fir[i] += 8;
+                            position.firl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 += 9; //t2 + 1
-                shiftconst = (1ULL << t4);
-                if(t < 7 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i]++;
-                    temp.firl |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x < 7){
+                    shiftconst = (mshift << 1);
+                    if(x < 7 and (firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                ++temp.fir[i];
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                ++temp.fir[i];
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            ++position.fir[i];
+                            position.firl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            --position.fir[i];
+                            position.firl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 2; //t2 - 1
-                shiftconst = (1ULL << t4);
-                if(t > 0 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i]--;
-                    temp.firl |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x > 0){
+                    shiftconst = (mshift >> 1);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                --temp.fir[i];
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                --temp.fir[i];
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            --position.fir[i];
+                            position.firl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            ++position.fir[i];
+                            position.firl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 += 9; //t2 + 8
-                shiftconst = (1ULL << t4);
-                if(t2 < 56 and (firmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.fir[i] += 8;
-                    temp.firl |= shiftconst;
-                    if(secmask & shiftconst){
-                        if(temp.secl & shiftconst){
-                            ++temp.firlink;
-                            temp.secl ^= (shiftconst);
-                            removesecondlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift << 8){
+                    shiftconst = (mshift << 8);
+                    if((firmask & shiftconst) == 0){
+                        if(secmask & shiftconst){
+                            if(position.secl & shiftconst){
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firlink;
+                                temp.secl ^= (shiftconst);
+                                removesecondlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.firvirus < 3)
+                            {
+                                field temp = position;
+                                temp.fir[i] += 8;
+                                temp.firl ^= (shiftconst | mshift);
+                                ++temp.firvirus;
+                                temp.secv ^= (shiftconst);
+                                removesecondvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.firvirus < 3)
+                        else
                         {
-                            ++temp.firvirus;
-                            temp.secv ^= (shiftconst);
-                            removesecondvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.fir[i] += 8;
+                            position.firl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.fir[i] -= 8;
+                            position.firl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
             }
@@ -1265,670 +1687,1090 @@ vector<field> possiblemoves(const field &position, const bool player){
         {
             //todo
         }
-        return nplusone;
     }
     else
     {
-        for(int i = 0; i < position.seclinkindex; ++i){
-            const int t2 = (position.sec[i] & 63);
-            if(t2 == 59 or t2 == 60){
-                field temp = position;
-                if(position.sec[i] & 64)
-                    temp.isboostavailablesec = true;
-                --temp.seclinkindex;
-                temp.sec[i] = temp.sec[temp.seclinkindex];
-                temp.sec[temp.seclinkindex] = 0;
-                temp.secl ^= (1ULL << t2);
-                ++temp.seclink;
-                nplusone.push_back(temp);
+        if(__builtin_expect(position.secl & 1729382256910270464ULL, 0)){
+            __builtin_assume(position.seclinkindex > 0 and position.seclinkindex < 5);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.seclinkindex; ++i){
+                const int t2 = (position.sec[i] & 63);
+                if(t2 == 59 or t2 == 60){
+                    field temp = position;
+                    if(position.sec[i] & 64)
+                        temp.isboostavailablesec = true;
+                    --temp.seclinkindex;
+                    temp.sec[i] = temp.sec[temp.seclinkindex];
+                    temp.sec[temp.seclinkindex] = 0;
+                    temp.secl ^= (1ULL << t2);
+                    ++temp.seclink;
+                    nplusone.push_back(temp);
+                }
             }
         }
         if(position.isboostavailablesec){
-            for(int i = 4; i < position.secvirusindex; ++i){
-                field temp = position;
-                temp.sec[i] |= 64;
-                temp.isboostavailablesec = false;
-                if(i > 4)
-                    swap(temp.sec[i], temp.sec[4]);
-                nplusone.push_back(temp);
+            __builtin_assume(position.secvirusindex >= 4 and position.secvirusindex <= 8);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 4; i < position.secvirusindex; ++i){
+                position.sec[i] ^= 64;
+                position.isboostavailablesec = false;
+                int reschild;
+                if(i > 4){
+                    swap(position.sec[i], position.sec[4]);
+                    nplusone.push_back(position);
+                    swap(position.sec[i], position.sec[4]);
+                }
+                else
+                    nplusone.push_back(position);
+                position.sec[i] ^= 64;
+                position.isboostavailablesec = true;
+            }
+            __builtin_assume(position.seclinkindex >= 0 and position.seclinkindex <= 4);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.seclinkindex; ++i){
+                position.sec[i] ^= 64;
+                position.isboostavailablesec = false;
+                int reschild;
+                if(i > 0){
+                    swap(position.sec[i], position.sec[0]);
+                    nplusone.push_back(position);
+                    swap(position.sec[i], position.sec[0]);
+                }
+                else
+                    nplusone.push_back(position);
+                position.sec[i] ^= 64;
+                position.isboostavailablesec = true;
             }
         }
         const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
         if(firewallfir < 0){
-            int startlink = 0, startvirus = 4;
             if(position.isboostavailablesec == false){
                 int i;
-                if(position.sec[0] & 64){
-                    ++startlink;
+                if(position.sec[0] & 64)
                     i = 0;
-                }
-                else{
-                    ++startvirus;
-                    i = 4;
-                }
-                const int t = (position.sec[i] & 7), t2 = (position.sec[i] & 63), t3 = (position.sec[i] & 56);
-                int t4;
-                field nmove = position;
-                if(i == 0)
-                    nmove.secl ^= (1ULL << t2);
                 else
-                    nmove.secv ^= (1ULL << t2);
-                t4 = t2 + 8;
-                if(t3 < 56 and (secmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.sec[i] += 8;
-                        temp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.sec[i] += 8;
-                        temp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temp.firl & (1ULL << (t4))){
-                            ++temp.seclink;
-                            temp.firl ^= (1ULL << (t4));
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                    i = 4;
+                const int coords = (position.sec[i] & 63), x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
+                if(mshift << 8){
+                    uint64_t shiftconst = (mshift << 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.seclink;
+                                temp.firl ^= shiftconst;
+                                removefirstlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.secvirus;
+                                temp.firv ^= shiftconst;
+                                removefirstvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        t4 += 8;
-                        if(t3 < 48 and (secmask & (1ULL << (t4))) == 0){
-                            
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.sec[i] += 16;
-                                temptemp.secl |= (1ULL << (t4));
-                            }
-                            else
-                            {
-                                temptemp.sec[i] += 16;
-                                temptemp.secv |= (1ULL << (t4));
-                            }
-                            if(firmask & (1ULL << (t4))){
-                                if(temptemp.firl & (1ULL << (t4))){
-                                    ++temptemp.seclink;
-                                    temptemp.firl ^= (1ULL << (t4));
-                                    removefirstlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            if(mshift << 16){
+                                uint64_t shiftconstsec = (mshift << 16);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 16;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 16;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 16;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 16;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
                                 }
-                                else if(temptemp.secvirus < 3)
-                                {
-                                    ++temptemp.secvirus;
-                                    temptemp.firv ^= (1ULL << (t4));
-                                    removefirstvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            }
+                            position.sec[i] += 8;
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            position.sec[i] -= 8;
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            if(x < 7){
+                                uint64_t shiftconstsec = (mshift << 9);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
-                            {
-                                nplusone.push_back(temptemp);
+                            if(x > 0){
+                                uint64_t shiftconstsec = (mshift << 7);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
                             }
                         }
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 = t2 + 9;
-                if(t3 < 56 and (secmask & (1ULL << (t4))) == 0 and t < 7){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.sec[i] += 9;
-                        temptemp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.sec[i] += 9;
-                        temptemp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temptemp.firl & (1ULL << (t4))){
-                            ++temptemp.seclink;
-                            temptemp.firl ^= (1ULL << (t4));
-                            removefirstlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.secvirus < 3)
-                        {
-                            ++temptemp.secvirus;
-                            temptemp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 + 7;
-                if(t3 < 56 and (secmask & (1ULL << (t4))) == 0 and t > 0){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.sec[i] += 7;
-                        temptemp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.sec[i] += 7;
-                        temptemp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temptemp.firl & (1ULL << (t4))){
-                            ++temptemp.seclink;
-                            temptemp.firl ^= (1ULL << (t4));
-                            removefirstlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.secvirus < 3)
-                        {
-                            ++temptemp.secvirus;
-                            temptemp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 + 1;
-                if(t < 7 and (secmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.sec[i]++;
-                        temp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.sec[i]++;
-                        temp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temp.firl & (1ULL << (t4))){
-                            ++temp.seclink;
-                            temp.firl ^= (1ULL << (t4));
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                        else if(temp.secvirus < 3)
-                        {
-                            ++temp.secvirus;
-                            temp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        ++t4;
-                        if(t < 6 and (secmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.sec[i] += 2;
-                                temptemp.secl |= (1ULL << (t4));
+                if(x < 7){
+                    uint64_t shiftconst = (mshift << 1);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                ++temp.sec[i];
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.seclink;
+                                temp.firl ^= shiftconst;
+                                removefirstlink(temp, coords + 1);
+                                nplusone.push_back(temp);
                             }
-                            else
+                            else if(position.secvirus < 3)
                             {
-                                temptemp.sec[i] += 2;
-                                temptemp.secv |= (1ULL << (t4));
+                                field temp = position;
+                                ++temp.sec[i];
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.secvirus;
+                                temp.firv ^= shiftconst;
+                                removefirstvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
                             }
-                            if(firmask & (1ULL << (t4))){
-                                if(temptemp.firl & (1ULL << (t4))){
-                                    ++temptemp.seclink;
-                                    temptemp.firl ^= (1ULL << (t4));
-                                    removefirstlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.secvirus < 3)
-                                {
-                                    ++temptemp.secvirus;
-                                    temptemp.firv ^= (1ULL << (t4));
-                                    removefirstvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                        }
+                        else
+                        {
+                            if(x < 6){
+                                uint64_t shiftconstsec = (mshift << 2);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 2;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 2;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 2;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 2;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
+                            ++position.sec[i];
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
                             else
-                            {
-                                nplusone.push_back(temptemp);
-                            }
-                        }
-                        nplusone.push_back(temp);
-                    }
-                }
-                t4 = t2 - 1;
-                if(t > 0 and (secmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.sec[i]--;
-                        temp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.sec[i]--;
-                        temp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temp.firl & (1ULL << (t4))){
-                            ++temp.seclink;
-                            temp.firl ^= (1ULL << (t4));
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                        else if(temp.secvirus < 3)
-                        {
-                            ++temp.secvirus;
-                            temp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        --t4;
-                        if(t > 1 and (secmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.sec[i] -= 2;
-                                temptemp.secl |= (1ULL << (t4));
-                            }
+                                position.secv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            --position.sec[i];
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
                             else
-                            {
-                                temptemp.sec[i] -= 2;
-                                temptemp.secv |= (1ULL << (t4));
-                            }
-                            if(firmask & (1ULL << (t4))){
-                                if(temptemp.firl & (1ULL << (t4))){
-                                    ++temptemp.seclink;
-                                    temptemp.firl ^= (1ULL << (t4));
-                                    removefirstlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.secvirus < 3)
-                                {
-                                    ++temptemp.secvirus;
-                                    temptemp.firv ^= (1ULL << (t4));
-                                    removefirstvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                                position.secv ^= (mshift | shiftconst);
+                            if((secmask & (mshift << 8)) or (firmask & (mshift << 8))){
+                                uint64_t shiftconstsec = (mshift << 9);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
-                            {
-                                nplusone.push_back(temptemp);
-                            }
-                        }
-                        nplusone.push_back(temp);
-                    }
-                }
-                t4 = t2 - 7;
-                if(t3 > 7 and (secmask & (1ULL << (t4))) == 0 and t < 7){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.sec[i] -= 7;
-                        temptemp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.sec[i] -= 7;
-                        temptemp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temptemp.firl & (1ULL << (t4))){
-                            ++temptemp.seclink;
-                            temptemp.firl ^= (1ULL << (t4));
-                            removefirstlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.secvirus < 3)
-                        {
-                            ++temptemp.secvirus;
-                            temptemp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 - 9;
-                if(t3 > 7 and (secmask & (1ULL << (t4))) == 0 and t > 0){
-                    field temptemp = nmove;
-                    if(i == 0){
-                        temptemp.sec[i] -= 9;
-                        temptemp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temptemp.sec[i] -= 9;
-                        temptemp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temptemp.firl & (1ULL << (t4))){
-                            ++temptemp.seclink;
-                            temptemp.firl ^= (1ULL << (t4));
-                            removefirstlink(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                        else if(temptemp.secvirus < 3)
-                        {
-                            ++temptemp.secvirus;
-                            temptemp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temptemp, t4);
-                            nplusone.push_back(temptemp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temptemp);
-                    }
-                }
-                t4 = t2 - 8;
-                if(t3 > 7 and (secmask & (1ULL << (t4))) == 0){
-                    field temp = nmove;
-                    if(i == 0){
-                        temp.sec[i] -= 8;
-                        temp.secl |= (1ULL << (t4));
-                    }
-                    else
-                    {
-                        temp.sec[i] -= 8;
-                        temp.secv |= (1ULL << (t4));
-                    }
-                    if(firmask & (1ULL << (t4))){
-                        if(temp.firl & (1ULL << (t4))){
-                            ++temp.seclink;
-                            temp.firl ^= (1ULL << (t4));
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                        else if(temp.secvirus < 3)
-                        {
-                            ++temp.secvirus;
-                            temp.firv ^= (1ULL << (t4));
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
-                        }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
-                        t4 -= 8;
-                        if(t3 > 15 and (secmask & (1ULL << (t4))) == 0){
-                            field temptemp = nmove;
-                            if(i == 0){
-                                temptemp.sec[i] -= 16;
-                                temptemp.secl |= (1ULL << (t4));
-                            }
-                            else
-                            {
-                                temptemp.sec[i] -= 16;
-                                temptemp.secv |= (1ULL << (t4));
-                            }
-                            if(firmask & (1ULL << (t4))){
-                                if(temptemp.firl & (1ULL << (t4))){
-                                    ++temptemp.seclink;
-                                    temptemp.firl ^= (1ULL << (t4));
-                                    removefirstlink(temptemp, t4);
-                                    nplusone.push_back(temptemp);
-                                }
-                                else if(temptemp.secvirus < 3)
-                                {
-                                    ++temptemp.secvirus;
-                                    temptemp.firv ^= (1ULL << (t4));
-                                    removefirstvirus(temptemp, t4);
-                                    nplusone.push_back(temptemp);
+                            if((secmask & (mshift >> 8)) or (firmask & (mshift >> 8))){
+                                uint64_t shiftconstsec = (mshift >> 7);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
                                 }
                             }
-                            else
+                        }
+                    }
+                }
+                if(x > 0){
+                    uint64_t shiftconst = (mshift >> 1);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                --temp.sec[i];
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.seclink;
+                                temp.firl ^= shiftconst;
+                                removefirstlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
                             {
-                                nplusone.push_back(temptemp);
+                                field temp = position;
+                                --temp.sec[i];
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.secvirus;
+                                temp.firv ^= shiftconst;
+                                removefirstvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                        }
+                        else
+                        {
+                            if(x > 1){
+                                uint64_t shiftconstsec = (mshift >> 2);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 2;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 2;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 2);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 2;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 2;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            --position.sec[i];
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            ++position.sec[i];
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            if((secmask & (mshift << 8)) or (firmask & (mshift << 8))){
+                                uint64_t shiftconstsec = (mshift << 7);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] += 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] += 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] += 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] -= 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if((secmask & (mshift >> 8)) or (firmask & (mshift >> 8))){
+                                uint64_t shiftconstsec = (mshift >> 9);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if(mshift >> 8){
+                    uint64_t shiftconst = (mshift >> 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.seclink;
+                                temp.firl ^= shiftconst;
+                                removefirstlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                if(i == 0)
+                                    temp.secl ^= (mshift | shiftconst);
+                                else
+                                    temp.secv ^= (mshift | shiftconst);
+                                ++temp.secvirus;
+                                temp.firv ^= shiftconst;
+                                removefirstvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                        }
+                        else
+                        {
+                            position.sec[i] -= 8;
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            nplusone.push_back(position);
+                            position.sec[i] += 8;
+                            if(i == 0)
+                                position.secl ^= (mshift | shiftconst);
+                            else
+                                position.secv ^= (mshift | shiftconst);
+                            if(x < 7){
+                                uint64_t shiftconstsec = (mshift >> 7);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 7);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 7;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if(x > 0){
+                                uint64_t shiftconstsec = (mshift >> 9);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 9);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 9;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
+                            }
+                            if(mshift >> 16){
+                                uint64_t shiftconstsec = (mshift >> 16);
+                                if((secmask & shiftconstsec) == 0){
+                                    if(firmask & shiftconstsec){
+                                        if(position.firl & shiftconstsec){
+                                            field temp = position;
+                                            temp.sec[i] -= 16;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                        else if(position.secvirus < 3)
+                                        {
+                                            field temp = position;
+                                            temp.sec[i] -= 16;
+                                            if(i == 0)
+                                                temp.secl ^= (mshift | shiftconstsec);
+                                            else
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 16);
+                                            nplusone.push_back(temp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        position.sec[i] -= 16;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                        nplusone.push_back(position);
+                                        position.sec[i] += 16;
+                                        if(i == 0)
+                                            position.secl ^= (mshift | shiftconstsec);
+                                        else
+                                            position.secv ^= (mshift | shiftconstsec);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            else
-                for(int i = 0; i < position.seclinkindex; ++i){
-                    field temp = position;
-                    temp.sec[i] |= 64;
-                    temp.isboostavailablesec = false;
-                    if(i > 0)
-                        swap(temp.sec[i], temp.sec[0]);
-                    nplusone.push_back(temp);
-                }
-            for(int i = startvirus; i < position.secvirusindex; ++i){
-                const int t = (position.sec[i] & 7), t2 = position.sec[i];
-                int t4;
+            __builtin_assume(position.secvirusindex >= 4 and position.secvirusindex <= 8);
+            for(auto i = 4 + ((position.sec[4] >> 6) & 1); i < position.secvirusindex; ++i){
+                const int coords = position.sec[i], x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
-                field nmove = position;
-                nmove.secv ^= (1ULL << t2);
-                t4 = t2 + 8; //t2 + 8
-                shiftconst = (1ULL << t4);
-                if(t2 < 56 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i] += 8;
-                    temp.secv |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift << 8){
+                    shiftconst = (mshift << 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.sec[i] += 8;
+                            position.secv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.sec[i] -= 8;
+                            position.secv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 7; //t2 + 1
-                shiftconst = (1ULL << t4);
-                if(t < 7 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i]++;
-                    temp.secv |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x < 7){
+                    shiftconst = (mshift << 1);
+                    if(x < 7 and (secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                ++temp.sec[i];
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                ++temp.sec[i];
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            ++position.sec[i];
+                            position.secv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            --position.sec[i];
+                            position.secv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 2; //t2 - 1
-                shiftconst = (1ULL << t4);
-                if(t > 0 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i]--;
-                    temp.secv |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x > 0){
+                    shiftconst = (mshift >> 1);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                --temp.sec[i];
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                --temp.sec[i];
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            --position.sec[i];
+                            position.secv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            ++position.sec[i];
+                            position.secv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 7; //t2 - 8
-                shiftconst = (1ULL << t4);
-                if(t2 > 7 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i] -= 8;
-                    temp.secv |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift >> 8){
+                    shiftconst = (mshift >> 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                temp.secv ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.sec[i] -= 8;
+                            position.secv ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.sec[i] += 8;
+                            position.secv ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
             }
-            for(int i = startlink; i < position.seclinkindex; ++i){
-                const int t = (position.sec[i] & 7), t2 = position.sec[i];
-                int t4;
+            __builtin_assume(position.seclinkindex >= 0 and position.seclinkindex <= 4);
+            for(auto i = ((position.sec[0] >> 6) & 1); i < position.seclinkindex; ++i){
+                const int coords = position.sec[i], x = (coords & 7);
+                const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
-                field nmove = position;
-                nmove.secl ^= (1ULL << t2);
-                t4 = t2 + 8; //t2 + 8
-                shiftconst = (1ULL << t4);
-                if(t2 < 56 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i] += 8;
-                    temp.secl |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift >> 8){
+                    shiftconst = (mshift >> 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] -= 8;
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords - 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.sec[i] -= 8;
+                            position.secl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.sec[i] += 8;
+                            position.secl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 7; //t2 + 1
-                shiftconst = (1ULL << t4);
-                if(t < 7 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i]++;
-                    temp.secl |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x < 7){
+                    shiftconst = (mshift << 1);
+                    if(x < 7 and (secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                ++temp.sec[i];
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                ++temp.sec[i];
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords + 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            ++position.sec[i];
+                            position.secl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            --position.sec[i];
+                            position.secl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 2; //t2 - 1
-                shiftconst = (1ULL << t4);
-                if(t > 0 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i]--;
-                    temp.secl |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(x > 0){
+                    shiftconst = (mshift >> 1);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                --temp.sec[i];
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                --temp.sec[i];
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords - 1);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            --position.sec[i];
+                            position.secl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            ++position.sec[i];
+                            position.secl ^= (shiftconst | mshift);
                         }
-                    }
-                    else
-                    {
-                        nplusone.push_back(temp);
                     }
                 }
-                t4 -= 7; //t2 - 8
-                shiftconst = (1ULL << t4);
-                if(t2 > 7 and (secmask & shiftconst) == 0){
-                    field temp = nmove;
-                    temp.sec[i] -= 8;
-                    temp.secl |= shiftconst;
-                    if(firmask & shiftconst){
-                        if(temp.firl & shiftconst){
-                            ++temp.seclink;
-                            temp.firl ^= (shiftconst);
-                            removefirstlink(temp, t4);
-                            nplusone.push_back(temp);
+                if(mshift << 8){
+                    shiftconst = (mshift << 8);
+                    if((secmask & shiftconst) == 0){
+                        if(firmask & shiftconst){
+                            if(position.firl & shiftconst){
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.seclink;
+                                temp.firl ^= (shiftconst);
+                                removefirstlink(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
+                            else if(position.secvirus < 3)
+                            {
+                                field temp = position;
+                                temp.sec[i] += 8;
+                                temp.secl ^= (shiftconst | mshift);
+                                ++temp.secvirus;
+                                temp.firv ^= (shiftconst);
+                                removefirstvirus(temp, coords + 8);
+                                nplusone.push_back(temp);
+                            }
                         }
-                        else if(temp.secvirus < 3)
+                        else
                         {
-                            ++temp.secvirus;
-                            temp.firv ^= (shiftconst);
-                            removefirstvirus(temp, t4);
-                            nplusone.push_back(temp);
+                            position.sec[i] += 8;
+                            position.secl ^= (shiftconst | mshift);
+                            nplusone.push_back(position);
+                            position.sec[i] -= 8;
+                            position.secl ^= (shiftconst | mshift);
                         }
                     }
-                    else
-                    {
-                        nplusone.push_back(temp);
-                    }
-
                 }
             }
         }
@@ -3969,6 +4811,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             betabeg = beta;
         }
         if(__builtin_expect(position.secl & 1729382256910270464ULL, 0)){
+            __builtin_assume(position.seclinkindex > 0 and position.seclinkindex < 5);
             #pragma clang loop unroll_count(4)
             for(auto i = 0; i < position.seclinkindex; ++i){
                 const int t2 = (position.sec[i] & 63);
@@ -4106,16 +4949,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 16;
+                                            field temp = position;
+                                            temp.sec[i] += 16;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 16);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 16);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4127,16 +4970,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 16;
+                                            field temp = position;
+                                            temp.sec[i] += 16;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 16);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 16);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4195,16 +5038,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 9;
+                                            field temp = position;
+                                            temp.sec[i] += 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4216,16 +5059,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 9;
+                                            field temp = position;
+                                            temp.sec[i] += 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4265,16 +5108,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 7;
+                                            field temp = position;
+                                            temp.sec[i] += 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4286,16 +5129,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 7;
+                                            field temp = position;
+                                            temp.sec[i] += 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4386,16 +5229,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 2;
+                                            field temp = position;
+                                            temp.sec[i] += 2;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 2);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 2);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4407,16 +5250,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 2;
+                                            field temp = position;
+                                            temp.sec[i] += 2;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 2);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 2);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4475,16 +5318,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 9;
+                                            field temp = position;
+                                            temp.sec[i] += 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4496,16 +5339,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 9;
+                                            field temp = position;
+                                            temp.sec[i] += 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4545,16 +5388,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 7;
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4566,16 +5409,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 7;
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4666,16 +5509,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 2;
+                                            field temp = position;
+                                            temp.sec[i] -= 2;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 2);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 2);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4687,16 +5530,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 2;
+                                            field temp = position;
+                                            temp.sec[i] -= 2;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 2);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 2);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4755,16 +5598,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 7;
+                                            field temp = position;
+                                            temp.sec[i] += 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords + 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords + 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4776,16 +5619,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] += 7;
+                                            field temp = position;
+                                            temp.sec[i] += 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords + 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords + 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4825,16 +5668,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 9;
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4846,16 +5689,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 9;
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4965,16 +5808,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 7;
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -4986,16 +5829,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 7;
+                                            field temp = position;
+                                            temp.sec[i] -= 7;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 7);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 7);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -5035,16 +5878,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 9;
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -5056,16 +5899,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 9;
+                                            field temp = position;
+                                            temp.sec[i] -= 9;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 9);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 9);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -5105,16 +5948,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                 if((secmask & shiftconstsec) == 0){
                                     if(firmask & shiftconstsec){
                                         if(position.firl & shiftconstsec){
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 16;
+                                            field temp = position;
+                                            temp.sec[i] -= 16;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.seclink;
-                                            temptemp.firl ^= shiftconstsec;
-                                            removefirstlink(temptemp, coords - 16);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.seclink;
+                                            temp.firl ^= shiftconstsec;
+                                            removefirstlink(temp, coords - 16);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -5126,16 +5969,16 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                                         }
                                         else if(position.secvirus < 3)
                                         {
-                                            field temptemp = position;
-                                            temptemp.sec[i] -= 16;
+                                            field temp = position;
+                                            temp.sec[i] -= 16;
                                             if(i == 0)
-                                                temptemp.secl ^= (mshift | shiftconstsec);
+                                                temp.secl ^= (mshift | shiftconstsec);
                                             else
-                                                temptemp.secv ^= (mshift | shiftconstsec);
-                                            ++temptemp.secvirus;
-                                            temptemp.firv ^= shiftconstsec;
-                                            removefirstvirus(temptemp, coords - 16);
-                                            int reschild = minimax(depth, alpha, beta, true, temptemp, cache, terminate);
+                                                temp.secv ^= (mshift | shiftconstsec);
+                                            ++temp.secvirus;
+                                            temp.firv ^= shiftconstsec;
+                                            removefirstvirus(temp, coords - 16);
+                                            int reschild = minimax(depth, alpha, beta, true, temp, cache, terminate);
                                             if(beta > reschild){
                                                 if(reschild <= alpha){
                                                     if(depth > mincachedepth)
@@ -5855,7 +6698,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
     }
 }
 
-pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool player, const field &position){
+pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool player, field &position){
     cutoffdepth = depth - 5;
     if(player){
         vector<field> allmoves = possiblemoves(position, true);
@@ -6036,6 +6879,7 @@ inline bool isunique(field &toadd, vector<field> &array){
 }
 
 int main(){
+    system("CLS");
     //srand(time(NULL));
     ifstream load("analyze.bin", ios::binary);
     vector<field> todump;
@@ -6071,25 +6915,26 @@ int main(){
     }
     load.close();
     field pos;
-    // generatexfield(pos, true, 15);
-    // auto start = high_resolution_clock::now();
-    // int checksum = 0;
-    // for(int i = 0; i < 256; ++i){
-    //     if(__builtin_popcount(i) == 4){
-    //         generatexfield(pos, false, i); 
-    //         auto startit = high_resolution_clock::now();
-    //         pair<field, int> move = minimaxmain(14, MIN, MAX, true, pos);
-    //         auto endit = high_resolution_clock::now();
-    //         cout << "\33[2K\r" << flush;
-    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-    //         checksum ^= (move.second << (i & 1));
-    //         //dump << move.second << endl;
-    //     }
-    // }
-    // auto end = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // cout << "hash: " << checksum << endl;
-    // return 0;
+    generatexfield(pos, true, 15);
+    auto start = high_resolution_clock::now();
+    int checksum = 0;
+    for(int i = 0; i < 256; ++i){
+        if(__builtin_popcount(i) == 4){
+            generatexfield(pos, false, i); 
+            auto startit = high_resolution_clock::now();
+            pair<field, int> move = minimaxmain(14, MIN, MAX, true, pos);
+            auto endit = high_resolution_clock::now();
+            cout << "\33[2K\r" << flush;
+            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+            checksum ^= (move.second << (i & 1));
+            //dump << move.second << endl;
+        }
+    }
+    auto end = high_resolution_clock::now();
+    cout << duration_cast<milliseconds>(end - start).count() << endl;
+    cout << "hash: " << checksum << endl;
+    cin.get();
+    return 0;
     generatexfield(pos, true, indexes[rand() % 70]);
     generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
