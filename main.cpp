@@ -59,7 +59,7 @@ struct field{
         return res;
     }
     size_t operator()(const field& s) const {
-        return hash<uint64_t>()(s.firl | s.firv | s.secl | s.secv) ^ hash<uint64_t>()((fir[0] << 7) | (fir[4] << 14) | (sec[0] << 21) | sec[4]);
+        return (s.firl | s.firv | s.secl | s.secv) ^ ((fir[0] << 7) | (fir[4] << 14) | (sec[0] << 21) | sec[4]);
     }
     bool operator==(const field& other) const {
         if(firl == other.firl and firv == other.firv and 
@@ -1996,178 +1996,103 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             return position.evaluatefir();
         --depth;
         if(position.firlink == 3){
-            const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
-            if(position.fir[4] & 64){
-                const int cachedpos = (position.fir[4] & 63), t = (cachedpos & 7);
-                if(cachedpos < 56){
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                    if(cachedpos < 48)
-                        if(position.secl & (1ULL << (cachedpos + 16)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
+            if(position.firl & 24)
+                return (16384 * depth);
+            if(position.secl){
+                const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
+                if(((position.secl >> 8) & firmask) or ((position.secl << 8) & firmask))
+                    return (16384 * depth);
+                __builtin_assume(position.seclinkindex > 0 and position.seclinkindex < 5);
+                #pragma clang loop unroll_count(4)
+                for(int i = 0; i < position.seclinkindex; ++i){
+                    const int cachedpos = position.sec[i], t = (cachedpos & 7);
                     if(t < 7)
-                        if(position.secl & (1ULL << (cachedpos + 9)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
+                        if(firmask & (1ULL << (cachedpos + 1)))
+                            return (16384 * depth);
                     if(t > 0)
-                        if(position.secl & (1ULL << (cachedpos + 7)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
+                        if(firmask & (1ULL << (cachedpos - 1)))
+                            return (16384 * depth);
                 }
-                if(cachedpos > 7){
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                    if(cachedpos > 15)
-                        if(position.secl & (1ULL << (cachedpos - 16)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                    if(t < 7)
-                        if(position.secl & (1ULL << (cachedpos - 7)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                    if(t > 0)
-                        if(position.secl & (1ULL << (cachedpos - 9)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                }
-                if(t < 7){
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
+                if(position.fir[4] > 64){
+                    const int cachedpos = (position.fir[4] & 63), t = (cachedpos & 7);
+                    if(cachedpos < 56){
+                        if(cachedpos < 48)
+                            if(position.secl & (1ULL << (cachedpos + 16)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                        if(t < 7)
+                            if(position.secl & (1ULL << (cachedpos + 9)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                        if(t > 0)
+                            if(position.secl & (1ULL << (cachedpos + 7)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                    }
+                    if(cachedpos > 7){
+                        if(cachedpos > 15)
+                            if(position.secl & (1ULL << (cachedpos - 16)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                        if(t < 7)
+                            if(position.secl & (1ULL << (cachedpos - 7)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                        if(t > 0)
+                            if(position.secl & (1ULL << (cachedpos - 9)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                    }
                     if(t < 6)
                         if(position.secl & (1ULL << (cachedpos + 2)))
                             if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0)
                                 return (16384 * depth);
-                }
-                if(t > 0){
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
                     if(t > 1)
                         if(position.secl & (1ULL << (cachedpos - 2)))
                             if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0)
                                 return (16384 * depth);
                 }
-            }
-            else
-            {
-                const int cachedpos = position.fir[4], t = (cachedpos & 7);
-                if(cachedpos < 56)
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                if(cachedpos > 7)
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                if(t < 7)
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
-                if(t > 0)
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
-            }
-            if(position.fir[0] & 64){
-                const int cachedpos = (position.fir[0] & 63), t = (cachedpos & 7);
-                if(cachedpos == 3 or cachedpos == 4)
-                    return (16384 * depth);
-                // if(cachedpos == 5 or cachedpos == 4 or cachedpos == 3 or cachedpos == 2 or (cachedpos == 11 and ((secmask | firmask) & (1ULL << 3)) == 0) or (cachedpos == 12 and ((secmask | firmask) & (1ULL << 4)) == 0))
-                //     return (16384 * depth);
-                if(cachedpos < 56){
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                    if(cachedpos < 48)
-                        if(position.secl & (1ULL << (cachedpos + 16)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
-                    if(t < 7)
-                        if(position.secl & (1ULL << (cachedpos + 9)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
-                    if(t > 0)
-                        if(position.secl & (1ULL << (cachedpos + 7)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (16384 * depth);
-                }
-                if(cachedpos > 7){
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                    if(cachedpos > 15)
-                        if(position.secl & (1ULL << (cachedpos - 16)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                    if(t < 7)
-                        if(position.secl & (1ULL << (cachedpos - 7)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                    if(t > 0)
-                        if(position.secl & (1ULL << (cachedpos - 9)))
-                            if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (16384 * depth);
-                }
-                if(t < 7){
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
+                if(position.fir[0] > 63){
+                    const int cachedpos = (position.fir[0] & 63), t = (cachedpos & 7);
+                    // if(cachedpos == 5 or cachedpos == 4 or cachedpos == 3 or cachedpos == 2 or (cachedpos == 11 and ((secmask | firmask) & (1ULL << 3)) == 0) or (cachedpos == 12 and ((secmask | firmask) & (1ULL << 4)) == 0))
+                    //     return (16384 * depth);
+                    if(cachedpos < 56){
+                        if(cachedpos < 48)
+                            if(position.secl & (1ULL << (cachedpos + 16)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                        if(t < 7)
+                            if(position.secl & (1ULL << (cachedpos + 9)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                        if(t > 0)
+                            if(position.secl & (1ULL << (cachedpos + 7)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (16384 * depth);
+                    }
+                    if(cachedpos > 7){
+                        if(cachedpos > 15)
+                            if(position.secl & (1ULL << (cachedpos - 16)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                        if(t < 7)
+                            if(position.secl & (1ULL << (cachedpos - 7)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                        if(t > 0)
+                            if(position.secl & (1ULL << (cachedpos - 9)))
+                                if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.secv | firmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (16384 * depth);
+                    }
                     if(t < 6)
                         if(position.secl & (1ULL << (cachedpos + 2)))
                             if(((position.secv | firmask) & (1ULL << (cachedpos + 1))) == 0)
                                 return (16384 * depth);
-                }
-                if(t > 0){
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
                     if(t > 1)
                         if(position.secl & (1ULL << (cachedpos - 2)))
                             if(((position.secv | firmask) & (1ULL << (cachedpos - 1))) == 0)
                                 return (16384 * depth);
                 }
-            }
-            else
-            {
-                const int cachedpos = position.fir[0], t = (cachedpos & 7);
-                if(cachedpos == 3 or cachedpos == 4)
-                    return (16384 * depth);
-                if(cachedpos < 56)
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                if(cachedpos > 7)
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                if(t < 7)
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
-                if(t > 0)
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
-            }
-            for(int i = 5; i < position.firvirusindex; ++i){
-                const int cachedpos = position.fir[i], t = (cachedpos & 7);
-                if(cachedpos < 56)
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                if(cachedpos > 7)
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                if(t < 7)
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
-                if(t > 0)
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
-            }
-            for(int i = 1; i < position.firlinkindex; ++i){
-                const int cachedpos = position.fir[i], t = (cachedpos & 7);
-                if(cachedpos == 3 or cachedpos == 4)
-                    return (16384 * depth);
-                if(cachedpos < 56)
-                    if(position.secl & (1ULL << (cachedpos + 8)))
-                        return (16384 * depth);
-                if(cachedpos > 7)
-                    if(position.secl & (1ULL << (cachedpos - 8)))
-                        return (16384 * depth);
-                if(t < 7)
-                    if(position.secl & (1ULL << (cachedpos + 1)))
-                        return (16384 * depth);
-                if(t > 0)
-                    if(position.secl & (1ULL << (cachedpos - 1)))
-                        return (16384 * depth);
             }
         }
         int alphabeg;
@@ -2175,7 +2100,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end()){
                 ttentry entry = it->second;
-                if(entry.flag & 1){
+                if(__builtin_expect(entry.flag & 1, 0)){
                     if(entry.score <= alpha) //if current alpha >= cached alpha then the alpha during evaluation wont change, thus we can return the current alpha
                         return alpha;
                     if(entry.flag > 1) //if the cached alpha is exact and it is bigger than the current alpha (because of the condition above) then we can return it
@@ -2194,8 +2119,10 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             alphabeg = alpha;
         }
-        if(position.firl & 24){
-            for(int i = 0; i < position.firlinkindex; ++i){
+        if(__builtin_expect(position.firl & 24, 0)){
+            __builtin_assume(position.firlinkindex > 0 and position.firlinkindex < 5);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.firlinkindex; ++i){
                 const int t2 = (position.fir[i] & 63);
                 if(t2 == 3 or t2 == 4){
                     field temp = position;
@@ -2219,6 +2146,8 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
         }
         if(position.isboostavailablefir){
+            __builtin_assume(position.firvirusindex >= 4 and position.firvirusindex <= 8);
+            #pragma clang loop unroll_count(4)
             for(int i = 4; i < position.firvirusindex; ++i){
                 position.fir[i] ^= 64;
                 position.isboostavailablefir = false;
@@ -2241,6 +2170,8 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     alpha = reschild;
                 }
             }
+            __builtin_assume(position.firlinkindex >= 0 and position.firlinkindex <= 4);
+            #pragma clang loop unroll_count(4)
             for(int i = 0; i < position.firlinkindex; ++i){
                 position.fir[i] ^= 64;
                 position.isboostavailablefir = false;
@@ -3395,6 +3326,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
+            __builtin_assume(position.firvirusindex >= 4 and position.firvirusindex <= 8);
             for(int i = 4 + ((position.fir[4] >> 6) & 1); i < position.firvirusindex; ++i){
                 const int coords = position.fir[i], x = (coords & 7);
                 const uint64_t mshift = (1ULL << coords);
@@ -3644,6 +3576,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
+            __builtin_assume(position.firlinkindex >= 0 and position.firlinkindex <= 4);
             for(int i = ((position.fir[0] >> 6) & 1); i < position.firlinkindex; ++i){
                 const int coords = position.fir[i], x = (coords & 7);
                 const uint64_t mshift = (1ULL << coords);
@@ -3910,178 +3843,105 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             return position.evaluatesec();
         --depth;
         if(position.seclink == 3){
-            const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
-            if(position.sec[4] & 64){
-                const int cachedpos = (position.sec[4] & 63), t = (cachedpos & 7);
-                if(cachedpos < 56){
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                    if(cachedpos < 48)
-                        if(position.firl & (1ULL << (cachedpos + 16)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
+            if(position.secl & 1729382256910270464ULL)
+                return (-16384 * depth);
+            if(position.firl){
+                const uint64_t firmask = (position.firl | position.firv), secmask = (position.secl | position.secv);
+                if(((position.firl >> 8) & secmask) or ((position.firl << 8) & secmask))
+                    return (-16384 * depth);
+                __builtin_assume(position.firlinkindex > 0 and position.firlinkindex <= 4);
+                #pragma clang loop unroll_count(4)
+                for(int i = 0; i < position.firlinkindex; ++i){
+                    const int cachedpos = position.fir[i], t = (cachedpos & 7);
                     if(t < 7)
-                        if(position.firl & (1ULL << (cachedpos + 9)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
+                        if(secmask & (1ULL << (cachedpos + 1)))
+                            return (-16384 * depth);
                     if(t > 0)
-                        if(position.firl & (1ULL << (cachedpos + 7)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
+                        if(secmask & (1ULL << (cachedpos - 1)))
+                            return (-16384 * depth);
                 }
-                if(cachedpos > 7){
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                    if(cachedpos > 15)
-                        if(position.firl & (1ULL << (cachedpos - 16)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                if(position.sec[4] & 64){
+                    const int cachedpos = (position.sec[4] & 63), t = (cachedpos & 7);
+                    if(cachedpos < 56){
+                        if(cachedpos < 48)
+                            if(position.firl & (1ULL << (cachedpos + 16)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t < 7)
+                            if(position.firl & (1ULL << (cachedpos + 9)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t > 0)
+                            if(position.firl & (1ULL << (cachedpos + 7)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                    }
+                    if(cachedpos > 7){
+                        if(cachedpos > 15)
+                            if(position.firl & (1ULL << (cachedpos - 16)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t < 7)
+                            if(position.firl & (1ULL << (cachedpos - 7)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t > 0)
+                            if(position.firl & (1ULL << (cachedpos - 9)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                    }
+                    if(t < 6){
+                        if(position.firl & (1ULL << (cachedpos + 2)))
+                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0)
                                 return (-16384 * depth);
-                    if(t < 7)
-                        if(position.firl & (1ULL << (cachedpos - 7)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                    }
+                    if(t > 1){
+                        if(position.firl & (1ULL << (cachedpos - 2)))
+                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0)
                                 return (-16384 * depth);
-                    if(t > 0)
-                        if(position.firl & (1ULL << (cachedpos - 9)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (-16384 * depth);
+                    }
                 }
-                if(t < 7){
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
+                if(position.sec[0] & 64){
+                    const int cachedpos = (position.sec[0] & 63), t = (cachedpos & 7);
+                    // if(cachedpos == 58 or cachedpos == 59 or cachedpos == 60 or cachedpos == 61 or (cachedpos == 52 and ((firmask | secmask) & (1ULL << 60)) == 0) or (cachedpos == 51 and ((firmask | secmask) & (1ULL << 61)) == 0))
+                    //     return (-16384 * depth);
+                    if(cachedpos < 56){
+                        if(cachedpos < 48)
+                            if(position.firl & (1ULL << (cachedpos + 16)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t < 7)
+                            if(position.firl & (1ULL << (cachedpos + 9)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t > 0)
+                            if(position.firl & (1ULL << (cachedpos + 7)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
+                                    return (-16384 * depth);
+                    }
+                    if(cachedpos > 7){
+                        if(cachedpos > 15)
+                            if(position.firl & (1ULL << (cachedpos - 16)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t < 7)
+                            if(position.firl & (1ULL << (cachedpos - 7)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                        if(t > 0)
+                            if(position.firl & (1ULL << (cachedpos - 9)))
+                                if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
+                                    return (-16384 * depth);
+                    }
                     if(t < 6)
                         if(position.firl & (1ULL << (cachedpos + 2)))
                             if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0)
                                 return (-16384 * depth);
-                }
-                if(t > 0){
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
                     if(t > 1)
                         if(position.firl & (1ULL << (cachedpos - 2)))
                             if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0)
                                 return (-16384 * depth);
                 }
-            }
-            else
-            {
-                const int cachedpos = position.sec[4], t = (cachedpos & 7);
-                if(cachedpos < 56)
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                if(cachedpos > 7)
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                if(t < 7)
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
-                if(t > 0)
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
-            }
-            if(position.sec[0] & 64){
-                const int cachedpos = (position.sec[0] & 63), t = (cachedpos & 7);
-                if(cachedpos == 59 or cachedpos == 60)
-                    return (-16384 * depth);
-                // if(cachedpos == 58 or cachedpos == 59 or cachedpos == 60 or cachedpos == 61 or (cachedpos == 52 and ((firmask | secmask) & (1ULL << 60)) == 0) or (cachedpos == 51 and ((firmask | secmask) & (1ULL << 61)) == 0))
-                //     return (-16384 * depth);
-                if(cachedpos < 56){
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                    if(cachedpos < 48)
-                        if(position.firl & (1ULL << (cachedpos + 16)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
-                    if(t < 7)
-                        if(position.firl & (1ULL << (cachedpos + 9)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
-                    if(t > 0)
-                        if(position.firl & (1ULL << (cachedpos + 7)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos + 8))) == 0)
-                                return (-16384 * depth);
-                }
-                if(cachedpos > 7){
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                    if(cachedpos > 15)
-                        if(position.firl & (1ULL << (cachedpos - 16)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (-16384 * depth);
-                    if(t < 7)
-                        if(position.firl & (1ULL << (cachedpos - 7)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (-16384 * depth);
-                    if(t > 0)
-                        if(position.firl & (1ULL << (cachedpos - 9)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0 or ((position.firv | secmask) & (1ULL << (cachedpos - 8))) == 0)
-                                return (-16384 * depth);
-                }
-                if(t < 7){
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
-                    if(t < 6)
-                        if(position.firl & (1ULL << (cachedpos + 2)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos + 1))) == 0)
-                                return (-16384 * depth);
-                }
-                if(t > 0){
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
-                    if(t > 1)
-                        if(position.firl & (1ULL << (cachedpos - 2)))
-                            if(((position.firv | secmask) & (1ULL << (cachedpos - 1))) == 0)
-                                return (-16384 * depth);
-                }
-            }
-            else
-            {
-                const int cachedpos = position.sec[0], t = (cachedpos & 7);
-                if(cachedpos == 59 or cachedpos == 60)
-                    return (-16384 * depth);
-                if(cachedpos < 56)
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                if(cachedpos > 7)
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                if(t < 7)
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
-                if(t > 0)
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
-            }
-            for(int i = 5; i < position.secvirusindex; ++i){
-                const int cachedpos = position.sec[i], t = (cachedpos & 7);
-                if(cachedpos < 56)
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                if(cachedpos > 7)
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                if(t < 7)
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
-                if(t > 0)
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
-            }
-            for(int i = 1; i < position.seclinkindex; ++i){
-                const int cachedpos = position.sec[i], t = (cachedpos & 7);
-                if(cachedpos == 59 or cachedpos == 60)
-                    return (-16384 * depth);
-                if(cachedpos < 56)
-                    if(position.firl & (1ULL << (cachedpos + 8)))
-                        return (-16384 * depth);
-                if(cachedpos > 7)
-                    if(position.firl & (1ULL << (cachedpos - 8)))
-                        return (-16384 * depth);
-                if(t < 7)
-                    if(position.firl & (1ULL << (cachedpos + 1)))
-                        return (-16384 * depth);
-                if(t > 0)
-                    if(position.firl & (1ULL << (cachedpos - 1)))
-                        return (-16384 * depth);
             }
         }
         int betabeg;
@@ -4089,7 +3949,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end()){
                 ttentry entry = it->second;
-                if(entry.flag & 1){
+                if(__builtin_expect(entry.flag & 1, 0)){
                     if(entry.score >= beta) //if current beta <= cached beta then the beta during evaluation wont change, thus we can return the current beta
                         return beta;
                     if(entry.flag > 1) //if the cached beta is exact and it is smaller than the current beta (because of the condition above) then we can return it
@@ -4108,8 +3968,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             betabeg = beta;
         }
-        if(position.secl & 1729382256910270464ULL){
-            for(int i = 0; i < position.seclinkindex; ++i){
+        if(__builtin_expect(position.secl & 1729382256910270464ULL, 0)){
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.seclinkindex; ++i){
                 const int t2 = (position.sec[i] & 63);
                 if(t2 == 59 or t2 == 60){
                     field temp = position;
@@ -4133,7 +3994,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
         }
         if(position.isboostavailablesec){
-            for(int i = 4; i < position.secvirusindex; ++i){
+            __builtin_assume(position.secvirusindex >= 4 and position.secvirusindex <= 8);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 4; i < position.secvirusindex; ++i){
                 position.sec[i] ^= 64;
                 position.isboostavailablesec = false;
                 int reschild;
@@ -4155,7 +4018,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     beta = reschild;
                 }
             }
-            for(int i = 0; i < position.seclinkindex; ++i){
+            __builtin_assume(position.seclinkindex >= 0 and position.seclinkindex <= 4);
+            #pragma clang loop unroll_count(4)
+            for(auto i = 0; i < position.seclinkindex; ++i){
                 position.sec[i] ^= 64;
                 position.isboostavailablesec = false;
                 int reschild;
@@ -5309,7 +5174,8 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
-            for(int i = 4 + ((position.sec[4] >> 6) & 1); i < position.secvirusindex; ++i){
+            __builtin_assume(position.secvirusindex >= 4 and position.secvirusindex <= 8);
+            for(auto i = 4 + ((position.sec[4] >> 6) & 1); i < position.secvirusindex; ++i){
                 const int coords = position.sec[i], x = (coords & 7);
                 const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
@@ -5558,7 +5424,8 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     }
                 }
             }
-            for(int i = ((position.sec[0] >> 6) & 1); i < position.seclinkindex; ++i){
+            __builtin_assume(position.seclinkindex >= 0 and position.seclinkindex <= 4);
+            for(auto i = ((position.sec[0] >> 6) & 1); i < position.seclinkindex; ++i){
                 const int coords = position.sec[i], x = (coords & 7);
                 const uint64_t mshift = (1ULL << coords);
                 uint64_t shiftconst;
@@ -5851,7 +5718,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2a/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5894,7 +5761,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2b/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5927,7 +5794,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 mtx.lock();
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2a/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -5970,7 +5837,7 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
                 }
                 ++finished;
                 mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2x/3 ");
+                displayProgressBar(allmoves.size(), finished, "Calculating stage 2b/3 ");
             });
         }
         for(int i = 0; i < allmoves.size(); ++i)
@@ -6204,25 +6071,25 @@ int main(){
     }
     load.close();
     field pos;
-    generatexfield(pos, true, 15);
-    auto start = high_resolution_clock::now();
-    int checksum = 0;
-    for(int i = 0; i < 256; ++i){
-        if(__builtin_popcount(i) == 4){
-            generatexfield(pos, false, i); 
-            auto startit = high_resolution_clock::now();
-            pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
-            auto endit = high_resolution_clock::now();
-            cout << "\33[2K\r" << flush;
-            cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
-            checksum ^= (move.second << (i & 1));
-            //dump << move.second << endl;
-        }
-    }
-    auto end = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(end - start).count() << endl;
-    cout << "hash: " << checksum << endl;
-    return 0;
+    // generatexfield(pos, true, 15);
+    // auto start = high_resolution_clock::now();
+    // int checksum = 0;
+    // for(int i = 0; i < 256; ++i){
+    //     if(__builtin_popcount(i) == 4){
+    //         generatexfield(pos, false, i); 
+    //         auto startit = high_resolution_clock::now();
+    //         pair<field, int> move = minimaxmain(14, MIN, MAX, true, pos);
+    //         auto endit = high_resolution_clock::now();
+    //         cout << "\33[2K\r" << flush;
+    //         cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //         checksum ^= (move.second << (i & 1));
+    //         //dump << move.second << endl;
+    //     }
+    // }
+    // auto end = high_resolution_clock::now();
+    // cout << duration_cast<milliseconds>(end - start).count() << endl;
+    // cout << "hash: " << checksum << endl;
+    // return 0;
     generatexfield(pos, true, indexes[rand() % 70]);
     generatexfield(pos, false, indexes[rand() % 70]);
     printfield(pos);
@@ -6230,25 +6097,25 @@ int main(){
     auto startm = high_resolution_clock::now();
     for(;;){
         auto start = high_resolution_clock::now();
-        pair<field, int> move = minimaxmain(14, MIN, MAX, false, pos);
+        pair<field, int> move = minimaxmain(10, MIN, MAX, false, pos);
         auto end = high_resolution_clock::now();
         cout << "\33[2K\r" << flush;
         //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        if(isunique(pos, todump)){
-			ofstream dump("analyze.bin", ios::binary);
-			todump.push_back(pos);
-			speed.push_back(duration_cast<milliseconds>(end - start).count());
-			pl.push_back(false);
-			int size = todump.size();
-			dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
-			for(int i = 0; i < size; ++i){
-				dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
-				dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
-				bool t = pl[i];
-				dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
-			}
-		}
+        // if(isunique(pos, todump)){
+		// 	ofstream dump("analyze.bin", ios::binary);
+		// 	todump.push_back(pos);
+		// 	speed.push_back(duration_cast<milliseconds>(end - start).count());
+		// 	pl.push_back(false);
+		// 	int size = todump.size();
+		// 	dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+		// 	for(int i = 0; i < size; ++i){
+		// 		dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
+		// 		dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
+		// 		bool t = pl[i];
+		// 		dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
+		// 	}
+		// }
         pos = move.first; 
         // vector<field> allmoves = possiblemoves(pos, false);
         // for(int i = 0; i < allmoves.size(); ++i){
@@ -6286,20 +6153,20 @@ int main(){
         cout << "\33[2K\r" << flush;
         //cout << "Move time: " << duration_cast<milliseconds>(end - start).count() << endl;
         cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
-        if(isunique(pos, todump)){
-			ofstream dump("analyze.bin", ios::binary);
-			todump.push_back(pos);
-			speed.push_back(duration_cast<milliseconds>(end - start).count());
-			pl.push_back(true);
-			int size = todump.size();
-			dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
-			for(int i = 0; i < size; ++i){
-				dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
-				dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
-				bool t = pl[i];
-				dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
-			}
-		}
+        // if(isunique(pos, todump)){
+		// 	ofstream dump("analyze.bin", ios::binary);
+		// 	todump.push_back(pos);
+		// 	speed.push_back(duration_cast<milliseconds>(end - start).count());
+		// 	pl.push_back(true);
+		// 	int size = todump.size();
+		// 	dump.write(reinterpret_cast<const char*>(&size), sizeof(int));
+		// 	for(int i = 0; i < size; ++i){
+		// 		dump.write(reinterpret_cast<const char*>(&todump[i]), sizeof(field));
+		// 		dump.write(reinterpret_cast<const char*>(&speed[i]), sizeof(int));
+		// 		bool t = pl[i];
+		// 		dump.write(reinterpret_cast<const char*>(&t), sizeof(bool));
+		// 	}
+		// }
         pos = move.first;
         // cout << pos.firl << endl;
         // cout << pos.firv << endl;
