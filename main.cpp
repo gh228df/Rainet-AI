@@ -14,8 +14,8 @@ const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58,
 int firewallfir = -1; // 0b ycoords(3bits) xcoords(3bits)
 int firewallsec = -1; // 0b ycoords(3bits) xcoords(3bits)
 
-#define MIN = -1000000;
-#define MAX = 1000000;
+#define MIN -1000000
+#define MAX 1000000
 
 struct ttentry
 {
