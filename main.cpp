@@ -1,14 +1,12 @@
-#include <iostream>
-#include <fstream>
-#include <chrono>
+
 #include <vector>
 #include <ankerl/unordered_dense.h>
 #include <thread>
 #include <mutex>
 #include <assert.h>
+#include <time.h>
 
 using namespace std;
-using namespace chrono;
 
 const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
 
@@ -17,6 +15,8 @@ const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
 
 #define MIN -1000000
 #define MAX 1000000
+
+#define MIN_CACHE_DEPTH 2
 
 #define STATE_IS_BOOST_AVAILABLE_FIR (1u)
 #define STATE_IS_BOOST_AVAILABLE_FIR_SHIFT (0)
@@ -68,13 +68,9 @@ struct field
 
     uint8_t state_mask;
 
-    int evaluate_fir() // maximize
+    int evaluate() // maximize
     {
-        return (((int)fir_link << 10) - ((int)fir_virus << 11) - ((int)sec_link << 11) + ((int)sec_virus << 10)) + (int)forward_adv_fir;
-    }
-    int evaluate_sec() // minimize
-    {
-        return (((int)sec_virus << 11) - ((int)sec_link << 10) + ((int)fir_link << 11) - ((int)fir_virus << 10)) - (int)forward_adv_sec;
+        return ((1024 << fir_link) - (1024 << fir_virus) - (2048 << sec_link) + (2048 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec;
     }
     size_t operator()(const field &s) const
     {
@@ -1097,10 +1093,6 @@ vector<field> possiblemoves(field &position, const bool player)
     return nplusone;
 }
 
-const int mincachedepth = 2, mincachedepthfull = 2, maxthreads = 50, mindepthformultithreadedsearch = 9;
-
-int minimax(int depth, int alpha, int beta, const bool player, field &position, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache);
-
 // inline void minimaxfullfir(int &reschild, int &depth, field &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
 // {
 //     if (depth == 0)
@@ -1191,7 +1183,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;                                                                                                     \
                 if (beta <= alpha)                                                                                                                                 \
                 {                                                                                                                                                  \
-                    if (depth > mincachedepth)                                                                                                                     \
+                    if (depth > MIN_CACHE_DEPTH)                                                                                                                   \
                         cache[depth][position] = {alpha, 0};                                                                                                       \
                     return alpha;                                                                                                                                  \
                 }                                                                                                                                                  \
@@ -1230,7 +1222,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;                                                                                                     \
                 if (beta <= alpha)                                                                                                                                 \
                 {                                                                                                                                                  \
-                    if (depth > mincachedepth)                                                                                                                     \
+                    if (depth > MIN_CACHE_DEPTH)                                                                                                                   \
                         cache[depth][position] = {alpha, 0};                                                                                                       \
                     return alpha;                                                                                                                                  \
                 }                                                                                                                                                  \
@@ -1258,7 +1250,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             alpha = (reschild > alpha) ? reschild : alpha;                                                                                                         \
             if (beta <= alpha)                                                                                                                                     \
             {                                                                                                                                                      \
-                if (depth > mincachedepth)                                                                                                                         \
+                if (depth > MIN_CACHE_DEPTH)                                                                                                                       \
                     cache[depth][position] = {alpha, 0};                                                                                                           \
                 return alpha;                                                                                                                                      \
             }                                                                                                                                                      \
@@ -1303,7 +1295,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;                                                                                                        \
                 if (beta <= alpha)                                                                                                                                 \
                 {                                                                                                                                                  \
-                    if (depth > mincachedepth)                                                                                                                     \
+                    if (depth > MIN_CACHE_DEPTH)                                                                                                                   \
                         cache[depth][position] = {beta, 0};                                                                                                        \
                     return beta;                                                                                                                                   \
                 }                                                                                                                                                  \
@@ -1342,7 +1334,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;                                                                                                        \
                 if (beta <= alpha)                                                                                                                                 \
                 {                                                                                                                                                  \
-                    if (depth > mincachedepth)                                                                                                                     \
+                    if (depth > MIN_CACHE_DEPTH)                                                                                                                   \
                         cache[depth][position] = {beta, 0};                                                                                                        \
                     return beta;                                                                                                                                   \
                 }                                                                                                                                                  \
@@ -1370,7 +1362,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             beta = (reschild < beta) ? reschild : beta;                                                                                                            \
             if (beta <= alpha)                                                                                                                                     \
             {                                                                                                                                                      \
-                if (depth > mincachedepth)                                                                                                                         \
+                if (depth > MIN_CACHE_DEPTH)                                                                                                                       \
                     cache[depth][position] = {beta, 0};                                                                                                            \
                 return beta;                                                                                                                                       \
             }                                                                                                                                                      \
@@ -1387,13 +1379,13 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
     if (player)
     {
         if (depth == 0)
-            return position.evaluate_sec();
+            return position.evaluate();
         --depth;
 
         if (position.fir_link == 3)
         {
             if (fir_link_mask & 24)
-                return (16384 * depth);
+                return (32768 * (depth + 1));
             if (sec_link_mask)
             {
                 const uint64_t firmask = position.is_fir_mask, secmask = position.is_sec_mask;
@@ -1401,7 +1393,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     ((sec_link_mask << 8) & firmask) ||                             // down
                     (((sec_link_mask & 18374403900871474942ULL) >> 1) & firmask) || // left
                     (((sec_link_mask & 9187201950435737471ULL) << 1) & firmask))    // right
-                    return (16384 * depth);
+                    return (32768 * (depth + 1));
                 if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
                 {
                     uint64_t boosted_mask = position.is_boosted_mask & firmask;
@@ -1410,13 +1402,17 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if ((((sec_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                        // up and not blocked
                         ((sec_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                          // down and not blocked
                         ((((sec_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) || // left and not blocked
-                        ((((sec_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0))     // right and not blocked
-                        return (16384 * depth);
+                        ((((sec_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||   // right and not blocked
+                        ((((sec_link_mask & 18374403900871474942ULL) >> 9) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)) || // up left
+                        ((((sec_link_mask & 18374403900871474942ULL) << 7) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down left
+                        ((((sec_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down right
+                        ((((sec_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0))) // up right
+                        return (32768 * (depth + 1));
                 }
             }
         }
         int alphabeg;
-        if (depth > mincachedepth)
+        if (depth > MIN_CACHE_DEPTH)
         {
             auto it = cache[depth].find(position);
             if (it != cache[depth].end())
@@ -1460,7 +1456,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {alpha, 0};
                     return alpha;
                 }
@@ -1480,7 +1476,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {alpha, 0};
                     return alpha;
                 }
@@ -1504,7 +1500,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {alpha, 0};
                     return alpha;
                 }
@@ -1527,7 +1523,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {alpha, 0};
                     return alpha;
                 }
@@ -1729,7 +1725,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {alpha, 0};
                     return alpha;
                 }
@@ -1739,19 +1735,19 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             // todo
         }
-        if (depth > mincachedepthfull)
+        if (depth > MIN_CACHE_DEPTH)
             cache[depth][position] = {alpha, (alpha > alphabeg) ? 3 : 1};
         return alpha;
     }
     else
     {
         if (depth == 0)
-            return position.evaluate_fir();
+            return position.evaluate();
         --depth;
         if (position.sec_link == 3)
         {
             if (sec_link_mask & 1729382256910270464ULL)
-                return (-16384 * depth);
+                return (-32768 * (depth + 1));
             if (fir_link_mask)
             {
                 const uint64_t firmask = position.is_fir_mask, secmask = position.is_sec_mask;
@@ -1759,7 +1755,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     ((fir_link_mask << 8) & secmask) ||                             // down
                     (((fir_link_mask & 18374403900871474942ULL) >> 1) & secmask) || // left
                     (((fir_link_mask & 9187201950435737471ULL) << 1) & secmask))    // right
-                    return (-16384 * depth);
+                    return (-32768 * (depth + 1));
                 if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
                 {
                     uint64_t boosted_mask = position.is_boosted_mask & secmask;
@@ -1768,13 +1764,17 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     if ((((fir_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                        // up and not blocked
                         ((fir_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                          // down and not blocked
                         ((((fir_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) || // left and not blocked
-                        ((((fir_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0))     // right and not blocked
-                        return (-16384 * depth);
+                        ((((fir_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||   // right and not blocked
+                        ((((fir_link_mask & 18374403900871474942ULL) >> 9) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)) || // up left
+                        ((((fir_link_mask & 18374403900871474942ULL) << 7) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down left
+                        ((((fir_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down right
+                        ((((fir_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0))) // up right
+                        return (-32768 * (depth + 1));
                 }
             }
         }
         int betabeg;
-        if (depth > mincachedepth)
+        if (depth > MIN_CACHE_DEPTH)
         {
             auto it = cache[depth].find(position);
             if (it != cache[depth].end())
@@ -1818,7 +1818,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {beta, 0};
                     return beta;
                 }
@@ -1838,7 +1838,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {beta, 0};
                     return beta;
                 }
@@ -1862,7 +1862,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {beta, 0};
                     return beta;
                 }
@@ -1885,7 +1885,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {beta, 0};
                     return beta;
                 }
@@ -2086,7 +2086,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
-                    if (depth > mincachedepth)
+                    if (depth > MIN_CACHE_DEPTH)
                         cache[depth][position] = {beta, 0};
                     return beta;
                 }
@@ -2096,20 +2096,10 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             // todo
         }
-        if (depth > mincachedepthfull)
+        if (depth > MIN_CACHE_DEPTH)
             cache[depth][position] = {beta, (beta < betabeg) ? 3 : 1};
         return beta;
     }
-}
-
-const int multifinish = 2;
-
-mutex mtx;
-
-void displayProgressBar(const double total, const double finished, const string &text)
-{
-    cout << "\33[2K\r" << flush;
-    cout << text << " " << int(finished * 100.0 / total) << " %\r" << flush;
 }
 
 int cutoffdepth;
@@ -2126,20 +2116,16 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         vector<field> allmoves = possiblemoves(position, true);
         for (int i = 0; i < allmoves.size(); ++i)
             if (allmoves[i].fir_link > 3)
-                return (16384 * depth);
+                return (32768 * depth);
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
-        int finished = 0;
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2a/3 "); });
+                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
@@ -2157,35 +2143,19 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
-        finished = 0;
-        int tscore;
-        // cout << endl;
-        // cout << "D" << depth << " alpha: " << alpha << endl;
-        auto start = high_resolution_clock::now();
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &tscore]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
-                if(scores[i] > alpha){
-                //    cout << "    >" << endl;
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
-                }
-                //else
-                //    cout << endl;
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2b/3 "); });
+                if(scores[i] > alpha)
+                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        auto end = high_resolution_clock::now();
-        // cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
             if (scores[i] > alpha)
@@ -2200,20 +2170,16 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         vector<field> allmoves = possiblemoves(position, false);
         for (int i = 0; i < allmoves.size(); ++i)
             if (allmoves[i].sec_link > 3)
-                return (-16384 * depth);
+                return (-32768 * depth);
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
-        int finished = 0;
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2a/3 "); });
+                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
@@ -2231,35 +2197,19 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
-        finished = 0;
-        int tscore;
-        // cout << endl;
-        // cout << "D" << depth << " beta: " << beta << endl;
-        auto start = high_resolution_clock::now();
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished, &tscore]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Scout " << depth << " time: " << duration_cast<milliseconds>(stop - start).count();
-                if(scores[i] < beta){
-                //    cout << "    >" << endl;
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
-                }
-                //else
-                //    cout << endl;
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 2b/3 "); });
+                if(scores[i] < beta)
+                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        auto end = high_resolution_clock::now();
-        // cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
             if (beta > scores[i])
@@ -2279,29 +2229,20 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         vector<field> allmoves = possiblemoves(position, true);
         for (int i = 0; i < allmoves.size(); ++i)
             if (allmoves[i].fir_link > 3)
-                return make_pair(allmoves[i], (16384 * depth));
+                return make_pair(allmoves[i], (32768 * depth));
 
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
-        int finished = 0;
-        auto start = high_resolution_clock::now();
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
-                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 "); });
+                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        auto end = high_resolution_clock::now();
         int max = scores[0], index = 0;
         for (int i = 1; i < allmoves.size(); ++i)
         {
@@ -2312,49 +2253,23 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        // cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
         field bestfield = allmoves[0];
         alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
-        finished = 0;
-        // cout << endl;
-        // cout << "alpha: " << alpha << endl;
-        start = high_resolution_clock::now();
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
-                if(scores[i] > alpha){
-                    //cout << "    >" << endl;
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache);
-                }
-                //else
-                //    cout << endl;
-                mtx.lock();
-                // for(int j = 0; j < depth; ++j)
-                //     cout << "j:" << j << " " << newcache[j].size() << endl;
-                // if(toterminate){
-                //     mtx.unlock();
-                //     scores[i] = minimaxscout(depth - 1, alpha, beta, false, allmoves[i]);
-                // }
-                // else if(allmoves.size() - curfreethreads =return make_pair(bestfield, alpha);= multifinish && duration_cast<milliseconds>(stop - start).count() > (800 * (1 << (depth - 12))) && depth > 11){
-                //     toterminate = true;
-                // }
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 "); });
+                if(scores[i] > alpha)
+                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        end = high_resolution_clock::now();
-        // cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
         for (int i = 0; i < allmoves.size(); ++i)
         {
             if (scores[i] > alpha)
@@ -2370,29 +2285,20 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
         vector<field> allmoves = possiblemoves(position, false);
         for (int i = 0; i < allmoves.size(); ++i)
             if (allmoves[i].sec_link > 3)
-                return make_pair(allmoves[i], (-16384 * depth));
+                return make_pair(allmoves[i], (-32768 * depth));
 
         vector<thread> threads(allmoves.size());
         vector<int> scores(allmoves.size());
-        int finished = 0;
-        auto start = high_resolution_clock::now();
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
-                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Predict time: " << duration_cast<milliseconds>(stop - start).count() << endl;
-                mtx.lock();
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 1/3 "); });
+                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        auto end = high_resolution_clock::now();
+
         int min = scores[0], index = 0;
         for (int i = 1; i < allmoves.size(); ++i)
         {
@@ -2403,47 +2309,25 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
             }
         }
         swap(allmoves[0], allmoves[index]);
-        // cout << "Prediction time: " << duration_cast<milliseconds>(end - start).count() << endl;
+
         field bestfield = allmoves[0];
         beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
         allmoves.erase(allmoves.begin());
         threads.erase(threads.begin());
         scores.erase(scores.begin());
-        finished = 0;
-        // cout << endl;
-        // cout << "beta: " << beta << endl;
-        start = high_resolution_clock::now();
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
-            threads[i] = thread([&scores, i, depth, &alpha, &beta, &allmoves, &finished]()
+            threads[i] = thread([&scores, i, depth, &alpha, &beta, &allmoves]()
                                 {
                 vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                auto start = high_resolution_clock::now();
                 scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
-                auto stop = high_resolution_clock::now();
-                //cout << "Scout " << i << " time: " << duration_cast<milliseconds>(stop - start).count();
-                if(scores[i] < beta){
-                    //cout << "    >" << endl;
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache);
-                }
-                //else
-                //    cout << endl;
-                mtx.lock();
-                // if(toterminate){
-                //     mtx.unlock();
-                //     scores[i] = minimaxscout(depth - 1, alpha, beta, true, allmoves[i]);
-                // }
-                // else if(allmoves.size() - curfreethreads == multifinish && duration_cast<milliseconds>(stop - start).count() > (800 * (1 << (depth - 12))) && depth > 11){
-                //     toterminate = true;
-                // }
-                ++finished;
-                mtx.unlock();
-                displayProgressBar(allmoves.size(), finished, "Calculating stage 3/3 "); });
+                if(scores[i] < beta)
+                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache); });
         }
         for (int i = 0; i < allmoves.size(); ++i)
             threads[i].join();
-        end = high_resolution_clock::now();
-        // cout << "Minimax time: " << duration_cast<milliseconds>(end - start).count() << endl;
+
         for (int i = 0; i < allmoves.size(); ++i)
         {
             if (beta > scores[i])
@@ -2458,160 +2342,87 @@ pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool pl
 
 int main()
 {
+    struct timespec start, stop;
     // srand(time(NULL));
     field pos;
-    // auto start = high_resolution_clock::now();
+    // clock_gettime(CLOCK_MONOTONIC, &start);
     // int checksum = 0;
     // for (int i = 0; i < 70; ++i)
     // {
+    //     struct timespec start_it, stop_it;
     //     int fir, sec;
     //     field_construct(pos, indexes[69], indexes[i]);
-    //     auto startit = high_resolution_clock::now();
-    //     pair<field, int> move = minimaxmain(16, MIN, MAX, true, pos);
-    //     auto endit = high_resolution_clock::now();
-    //     cout << "\33[2K\r" << flush;
-    //     cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //     clock_gettime(CLOCK_MONOTONIC, &start_it);
+    //     pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
+    //     clock_gettime(CLOCK_MONOTONIC, &stop_it);
+    //     printf("%d     %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
     //     fir = move.second;
     //     checksum ^= (move.second << (indexes[i] & 1));
     //     field_construct(pos, indexes[i], indexes[69]);
-    //     startit = high_resolution_clock::now();
-    //     move = minimaxmain(16, MIN, MAX, false, pos);
-    //     endit = high_resolution_clock::now();
-    //     cout << "\33[2K\r" << flush;
-    //     cout << move.second << "     " << duration_cast<milliseconds>(endit - startit).count() << endl;
+    //     clock_gettime(CLOCK_MONOTONIC, &start_it);
+    //     move = minimaxmain(12, MIN, MAX, false, pos);
+    //     clock_gettime(CLOCK_MONOTONIC, &stop_it);
+    //     printf("%d     %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
     //     sec = move.second;
     //     if (fir != -1 * sec)
     //     {
-    //         cout << "Eval error\n";
+    //         printf("Eval error\n");
     //         exit(1);
     //     }
     //     checksum ^= (move.second << (indexes[i] & 1));
     // }
-    // auto end = high_resolution_clock::now();
-    // cout << duration_cast<milliseconds>(end - start).count() << endl;
-    // cout << "hash: " << checksum << endl;
-
+    // clock_gettime(CLOCK_MONOTONIC, &stop);
+    // printf("%ld\nhash: %d\n", (stop.tv_sec * 1000000000l + stop.tv_nsec - start.tv_sec * 1000000000l - start.tv_nsec) / 1000000, checksum);
     // return 0;
     field_construct(pos, indexes[15], indexes[15]);
     pos.print_field();
-    cout << endl;
-    auto startm = high_resolution_clock::now();
+    printf("\n");
+    clock_gettime(CLOCK_MONOTONIC, &start);
     for (;;)
     {
-        auto start = high_resolution_clock::now();
+        struct timespec start_it, stop_it;
+
+        clock_gettime(CLOCK_MONOTONIC, &start_it);
         pair<field, int> move = minimaxmain(16, MIN, MAX, false, pos);
-        auto end = high_resolution_clock::now();
-        cout << "\33[2K\r" << flush;
-        cout << "Minimized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+        clock_gettime(CLOCK_MONOTONIC, &stop_it);
+
+        printf("Minimized score: %d      %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
         pos = move.first;
         pos.print_field();
-        cout << endl;
+        printf("\n");
         if (pos.sec_link == 4)
         {
-            cout << "Player one wins! " << endl;
+            printf("Player one wins!\n");
             pos.print_field();
             break;
         }
         else if (pos.sec_virus == 4)
         {
-            cout << "Player one loses! " << endl;
+            printf("Player one loses!\n");
             pos.print_field();
             break;
         }
-        start = high_resolution_clock::now();
+        clock_gettime(CLOCK_MONOTONIC, &start_it);
         move = minimaxmain(16, MIN, MAX, true, pos);
-        end = high_resolution_clock::now();
-        cout << "\33[2K\r" << flush;
-        cout << "Maximized score: " << move.second << "      " << duration_cast<milliseconds>(end - start).count() << endl;
+        clock_gettime(CLOCK_MONOTONIC, &stop_it);
+
+        printf("Maximized score: %d      %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
         pos = move.first;
         pos.print_field();
-        cout << endl;
+        printf("\n");
         if (pos.fir_link == 4)
         {
-            cout << "Player two wins! " << endl;
+            printf("Player two wins!\n");
             pos.print_field();
             break;
         }
         else if (pos.fir_virus == 4)
         {
-            cout << "Player two loses! " << endl;
+            printf("Player one loses!\n");
             pos.print_field();
             break;
         }
     }
-    auto endm = high_resolution_clock::now();
-    cout << duration_cast<milliseconds>(endm - startm).count() << endl;
-    // ifstream getdata("evaluations.txt");
-    // int firwin = 0, secwin = 0;
-    // for(int i = 0; i < 70; ++i){
-    //     for(int u = 0; u < 70; ++u){
-    //         cout << u << endl;
-    //         field pos;
-    //         generate_field(pos, true, indexes[i]);
-    //         generate_field(pos, false, indexes[u]);
-    //         vector<field> moves;
-    //         for(;;){
-    //             pair<field, int> move = minimaxmain(6, -1000000, 1000000, false, pos);
-    //             int check;
-    //             getdata >> check;
-    //             if(check != move.second){
-    //                 cout << "Check error1!" << endl;
-    //                 cout << "Expected: " << check << endl;
-    //                 cout << "Got: " << move.second << endl;
-    //                 return 1;
-    //             }
-    //             pos = move.first;
-    //             bool isfound = false;
-    //             for(int it = 0; it < moves.size(); ++it)
-    //                 if(moves[it] == pos)
-    //                 {
-    //                     isfound = true;
-    //                     break;
-    //                 }
-    //             if(isfound)
-    //                 break;
-    //             moves.push_back(pos);
-    //             // pos.print_field();
-    //             // cout << endl;
-    //             if(pos.sec_link == 4){
-    //                 firwin++;
-    //                 break;
-    //             }
-    //             else if(pos.sec_virus == 4){
-    //                 secwin++;
-    //                 break;
-    //             }
-    //             move = minimaxmain(6, -1000000, 1000000, true, pos);
-    //             getdata >> check;
-    //             if(check != move.second){
-    //                 cout << "Check error2!" << endl;
-    //                 cout << "Expected: " << check << endl;
-    //                 cout << "Got: " << move.second << endl;
-    //                 return 1;
-    //             }
-    //             pos = move.first;
-    //             for(int it = 0; it < moves.size(); ++it)
-    //                 if(moves[it] == pos)
-    //                 {
-    //                     isfound = true;
-    //                     break;
-    //                 }
-    //             if(isfound)
-    //                 break;
-    //             moves.push_back(pos);
-    //             if(pos.fir_link == 4){
-    //                 secwin++;
-    //                 break;
-    //             }
-    //             else if(pos.fir_virus == 4){
-    //                 firwin++;
-    //                 break;
-    //             }
-    //         }
-    //     }
-    //     cout << "Firwinrate = " << double(firwin) / double(70 + i * 70) << endl;
-    //     cout << "Secwinrate = " << double(secwin) / double(70 + i * 70) << endl;
-    // }
-    // cout << "Firwinrate = " << double(firwin) / 4900.0 << endl;
-    // cout << "Secwinrate = " << double(secwin) / 4900.0 << endl;
+    clock_gettime(CLOCK_MONOTONIC, &stop);
+    printf("%ld\n", (stop.tv_sec * 1000000000l + stop.tv_nsec - start.tv_sec * 1000000000l - start.tv_nsec) / 1000000);
 }
