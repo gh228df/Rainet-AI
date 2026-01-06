@@ -1,9 +1,6 @@
-
-#include <vector>
 #include <ankerl/unordered_dense.h>
 #include <thread>
-#include <mutex>
-#include <assert.h>
+#include <pthread.h>
 #include <time.h>
 
 using namespace std;
@@ -42,13 +39,7 @@ const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
 #define ITERATION_CURRENT_IS_SECOND_LINK 4
 #define ITERATION_CURRENT_IS_SECOND_VIRUS 5
 
-struct ttentry
-{
-    int score;
-    int flag;
-};
-
-struct field
+struct field_t
 {
     uint64_t is_fir_mask;
     uint64_t is_sec_mask;
@@ -70,13 +61,13 @@ struct field
 
     int evaluate() // maximize
     {
-        return ((1024 << fir_link) - (1024 << fir_virus) - (2048 << sec_link) + (2048 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec;
+        return ((1024 << fir_link) - (2048 << fir_virus) - (1024 << sec_link) + (2048 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec;
     }
-    size_t operator()(const field &s) const
+    size_t operator()(const field_t &s) const
     {
         return s.is_fir_mask | s.is_sec_mask;
     }
-    bool operator!=(const field &other) const
+    bool operator!=(const field_t &other) const
     {
         if (is_sec_mask != other.is_sec_mask)
         {
@@ -135,7 +126,7 @@ struct field
         }
         return false;
     }
-    bool operator==(const field &other) const
+    bool operator==(const field_t &other) const
     {
         return (is_sec_mask == other.is_sec_mask && is_link_mask == other.is_link_mask &&
                 is_fir_mask == other.is_fir_mask && is_boosted_mask == other.is_boosted_mask &&
@@ -164,9 +155,9 @@ struct field
         return res;
     }
 
-    field reverse_field()
+    field_t reverse_field()
     {
-        field new_field;
+        field_t new_field;
         new_field.fir_link = sec_link;
         new_field.fir_virus = sec_virus;
         new_field.sec_link = fir_link;
@@ -347,7 +338,25 @@ struct field
     }
 };
 
-void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
+typedef struct
+{
+    int score;
+    int flag;
+} ttentry_t;
+
+typedef struct
+{
+    field_t moves[56];
+    int moves_count;
+} possible_moves_t;
+
+typedef struct
+{
+    field_t best_field;
+    int evaluation;
+} minimax_main_result_t;
+
+void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
 {
     f.is_sec_mask = 0;
     f.is_link_mask = 0;
@@ -379,7 +388,7 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
         {                                                                                                                                                          \
             if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
@@ -408,11 +417,11 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_sec_mask ^= new_pos_bitboard;                                                                                                              \
                 ++temp.fir_link;                                                                                                                                   \
                                                                                                                                                                    \
-                nplusone.push_back(temp);                                                                                                                          \
+                res.moves[res.moves_count++] = temp;                                                                                                               \
             }                                                                                                                                                      \
             else if (position.fir_virus < 3)                                                                                                                       \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
@@ -440,12 +449,12 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_sec_mask ^= new_pos_bitboard;                                                                                                              \
                 ++temp.fir_virus;                                                                                                                                  \
                                                                                                                                                                    \
-                nplusone.push_back(temp);                                                                                                                          \
+                res.moves[res.moves_count++] = temp;                                                                                                               \
             }                                                                                                                                                      \
         }                                                                                                                                                          \
         else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
         {                                                                                                                                                          \
-            field temp = position;                                                                                                                                 \
+            field_t temp = position;                                                                                                                               \
                                                                                                                                                                    \
             temp.forward_adv_fir += forward_adv;                                                                                                                   \
             if (is_boosted)                                                                                                                                        \
@@ -461,7 +470,7 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                        \
             }                                                                                                                                                      \
                                                                                                                                                                    \
-            nplusone.push_back(temp);                                                                                                                              \
+            res.moves[res.moves_count++] = temp;                                                                                                                   \
         }                                                                                                                                                          \
     }                                                                                                                                                              \
     else                                                                                                                                                           \
@@ -470,7 +479,7 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
         {                                                                                                                                                          \
             if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
@@ -499,11 +508,11 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_fir_mask ^= new_pos_bitboard;                                                                                                              \
                 ++temp.sec_link;                                                                                                                                   \
                                                                                                                                                                    \
-                nplusone.push_back(temp);                                                                                                                          \
+                res.moves[res.moves_count++] = temp;                                                                                                               \
             }                                                                                                                                                      \
             else if (position.sec_virus < 3)                                                                                                                       \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
@@ -531,12 +540,12 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_fir_mask ^= new_pos_bitboard;                                                                                                              \
                 ++temp.sec_virus;                                                                                                                                  \
                                                                                                                                                                    \
-                nplusone.push_back(temp);                                                                                                                          \
+                res.moves[res.moves_count++] = temp;                                                                                                               \
             }                                                                                                                                                      \
         }                                                                                                                                                          \
         else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
         {                                                                                                                                                          \
-            field temp = position;                                                                                                                                 \
+            field_t temp = position;                                                                                                                               \
                                                                                                                                                                    \
             temp.forward_adv_sec += forward_adv;                                                                                                                   \
             if (is_boosted)                                                                                                                                        \
@@ -552,14 +561,14 @@ void field_construct(field &f, uint8_t pos_fir, uint8_t pos_sec)
                 temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                        \
             }                                                                                                                                                      \
                                                                                                                                                                    \
-            nplusone.push_back(temp);                                                                                                                              \
+            res.moves[res.moves_count++] = temp;                                                                                                                   \
         }                                                                                                                                                          \
     }
 
-vector<field> possiblemoves(field &position, const bool player)
+possible_moves_t possiblemoves(field_t &position, const bool player)
 {
-    vector<field> nplusone;
-    nplusone.reserve(40);
+    possible_moves_t res;
+    res.moves_count = 0;
 
     uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
     uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
@@ -572,7 +581,7 @@ vector<field> possiblemoves(field &position, const bool player)
         {
             if (fir_link_mask & 8ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
@@ -581,11 +590,11 @@ vector<field> possiblemoves(field &position, const bool player)
                 temp.is_link_mask &= ~8ULL;
                 ++temp.fir_link;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
             if (fir_link_mask & 16ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
@@ -594,7 +603,7 @@ vector<field> possiblemoves(field &position, const bool player)
                 temp.is_link_mask &= ~16ULL;
                 ++temp.fir_link;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
         }
 
@@ -608,7 +617,7 @@ vector<field> possiblemoves(field &position, const bool player)
 
                 position.is_boosted_mask ^= pos;
                 position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_FIR;
-                nplusone.push_back(position);
+                res.moves[res.moves_count++] = position;
                 position.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
                 position.is_boosted_mask ^= pos;
 
@@ -623,7 +632,7 @@ vector<field> possiblemoves(field &position, const bool player)
 
                 position.is_boosted_mask ^= pos;
                 position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_FIR;
-                nplusone.push_back(position);
+                res.moves[res.moves_count++] = position;
                 position.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
                 position.is_boosted_mask ^= pos;
 
@@ -815,12 +824,12 @@ vector<field> possiblemoves(field &position, const bool player)
 
             if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
                 temp.is_boosted_mask &= temp.is_sec_mask;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
         }
         else
@@ -834,7 +843,7 @@ vector<field> possiblemoves(field &position, const bool player)
         {
             if (sec_link_mask & 576460752303423488ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
@@ -843,11 +852,11 @@ vector<field> possiblemoves(field &position, const bool player)
                 temp.is_link_mask &= ~576460752303423488ULL;
                 ++temp.sec_link;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
             if (sec_link_mask & 1152921504606846976ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
@@ -856,7 +865,7 @@ vector<field> possiblemoves(field &position, const bool player)
                 temp.is_link_mask &= ~1152921504606846976ULL;
                 ++temp.sec_link;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
         }
 
@@ -870,7 +879,7 @@ vector<field> possiblemoves(field &position, const bool player)
 
                 position.is_boosted_mask ^= pos;
                 position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_SEC;
-                nplusone.push_back(position);
+                res.moves[res.moves_count++] = position;
                 position.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
                 position.is_boosted_mask ^= pos;
 
@@ -885,7 +894,7 @@ vector<field> possiblemoves(field &position, const bool player)
 
                 position.is_boosted_mask ^= pos;
                 position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_SEC;
-                nplusone.push_back(position);
+                res.moves[res.moves_count++] = position;
                 position.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
                 position.is_boosted_mask ^= pos;
 
@@ -1076,12 +1085,12 @@ vector<field> possiblemoves(field &position, const bool player)
 
             if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
                 temp.is_boosted_mask &= temp.is_fir_mask;
 
-                nplusone.push_back(temp);
+                res.moves[res.moves_count++] = temp;
             }
         }
         else
@@ -1090,10 +1099,10 @@ vector<field> possiblemoves(field &position, const bool player)
         }
     }
 
-    return nplusone;
+    return res;
 }
 
-// inline void minimaxfullfir(int &reschild, int &depth, field &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
+// inline void minimaxfullfir(int &reschild, int &depth, field_t &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field_t, ttentry_t, field_t>> &cache)
 // {
 //     if (depth == 0)
 //         reschild = position.evaluate_fir();
@@ -1101,7 +1110,7 @@ vector<field> possiblemoves(field &position, const bool player)
 //         reschild = minimax(depth, alpha, beta, true, position, cache);
 // }
 
-// inline void minimaxscoutfir(int &reschild, int &depth, field &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
+// inline void minimaxscoutfir(int &reschild, int &depth, field_t &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field_t, ttentry_t, field_t>> &cache)
 // {
 //     if (depth == 0)
 //         reschild = position.evaluate_fir();
@@ -1118,7 +1127,7 @@ vector<field> possiblemoves(field &position, const bool player)
 //     }
 // }
 
-// inline void minimaxfullsec(int &reschild, int &depth, field &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
+// inline void minimaxfullsec(int &reschild, int &depth, field_t &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field_t, ttentry_t, field_t>> &cache)
 // {
 //     if (depth == 0)
 //         reschild = position.evaluate_sec();
@@ -1126,7 +1135,7 @@ vector<field> possiblemoves(field &position, const bool player)
 //         reschild = minimax(depth, alpha, beta, false, position, cache);
 // }
 
-// inline void minimaxscoutsec(int &reschild, int &depth, field &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
+// inline void minimaxscoutsec(int &reschild, int &depth, field_t &position, int &alpha, int &beta, vector<ankerl::unordered_dense::map<field_t, ttentry_t, field_t>> &cache)
 // {
 //     if (depth == 0)
 //         reschild = position.evaluate_sec();
@@ -1150,7 +1159,7 @@ vector<field> possiblemoves(field &position, const bool player)
         {                                                                                                                                                          \
             if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
@@ -1190,7 +1199,7 @@ vector<field> possiblemoves(field &position, const bool player)
             }                                                                                                                                                      \
             else if (position.fir_virus < 3)                                                                                                                       \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
@@ -1230,7 +1239,7 @@ vector<field> possiblemoves(field &position, const bool player)
         }                                                                                                                                                          \
         else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
         {                                                                                                                                                          \
-            field temp = position;                                                                                                                                 \
+            field_t temp = position;                                                                                                                               \
                                                                                                                                                                    \
             temp.forward_adv_fir += forward_adv;                                                                                                                   \
             if (is_boosted)                                                                                                                                        \
@@ -1262,7 +1271,7 @@ vector<field> possiblemoves(field &position, const bool player)
         {                                                                                                                                                          \
             if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
@@ -1302,7 +1311,7 @@ vector<field> possiblemoves(field &position, const bool player)
             }                                                                                                                                                      \
             else if (position.sec_virus < 3)                                                                                                                       \
             {                                                                                                                                                      \
-                field temp = position;                                                                                                                             \
+                field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                 temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
@@ -1342,7 +1351,7 @@ vector<field> possiblemoves(field &position, const bool player)
         }                                                                                                                                                          \
         else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
         {                                                                                                                                                          \
-            field temp = position;                                                                                                                                 \
+            field_t temp = position;                                                                                                                               \
                                                                                                                                                                    \
             temp.forward_adv_sec += forward_adv;                                                                                                                   \
             if (is_boosted)                                                                                                                                        \
@@ -1369,7 +1378,7 @@ vector<field> possiblemoves(field &position, const bool player)
         }                                                                                                                                                          \
     }
 
-int minimax(int depth, int alpha, int beta, const bool player, field &position, vector<ankerl::unordered_dense::map<field, ttentry, field>> &cache)
+int minimax(int depth, int alpha, int beta, const bool player, field_t &position, ankerl::unordered_dense::map<field_t, ttentry_t, field_t> *cache)
 {
     uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
     uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
@@ -1399,14 +1408,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     uint64_t boosted_mask = position.is_boosted_mask & firmask;
                     uint64_t other_mask = sec_virus_mask | firmask;
 
-                    if ((((sec_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                        // up and not blocked
-                        ((sec_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                          // down and not blocked
-                        ((((sec_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) || // left and not blocked
-                        ((((sec_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||   // right and not blocked
+                    if ((((sec_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                                                                     // up and not blocked
+                        ((sec_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                                                                       // down and not blocked
+                        ((((sec_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) ||                                              // left and not blocked
+                        ((((sec_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||                                                // right and not blocked
                         ((((sec_link_mask & 18374403900871474942ULL) >> 9) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)) || // up left
                         ((((sec_link_mask & 18374403900871474942ULL) << 7) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down left
-                        ((((sec_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down right
-                        ((((sec_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0))) // up right
+                        ((((sec_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) ||   // down right
+                        ((((sec_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)))     // up right
                         return (32768 * (depth + 1));
                 }
             }
@@ -1417,7 +1426,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end())
             {
-                ttentry entry = it->second;
+                ttentry_t entry = it->second;
                 if (__builtin_expect(entry.flag & 1, 0))
                 {
                     if (entry.score <= alpha) // if current alpha >= cached alpha then the alpha during evaluation wont change, thus we can return the current alpha
@@ -1443,7 +1452,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             if (fir_link_mask & 8ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
@@ -1463,7 +1472,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             if (fir_link_mask & 16ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(16ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
@@ -1716,7 +1725,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
 
             if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
                 temp.is_boosted_mask &= temp.is_sec_mask;
@@ -1761,14 +1770,14 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
                     uint64_t boosted_mask = position.is_boosted_mask & secmask;
                     uint64_t other_mask = fir_virus_mask | secmask;
 
-                    if ((((fir_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                        // up and not blocked
-                        ((fir_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                          // down and not blocked
-                        ((((fir_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) || // left and not blocked
-                        ((((fir_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||   // right and not blocked
+                    if ((((fir_link_mask >> 16) & boosted_mask) && ((other_mask >> 8) & boosted_mask) == 0) ||                                                                                                     // up and not blocked
+                        ((fir_link_mask << 16) & boosted_mask && ((other_mask << 8) & boosted_mask) == 0) ||                                                                                                       // down and not blocked
+                        ((((fir_link_mask & 18229723555195321596ULL) >> 2) & boosted_mask) && (((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0) ||                                              // left and not blocked
+                        ((((fir_link_mask & 4557430888798830399ULL) << 2) & boosted_mask) && (((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0) ||                                                // right and not blocked
                         ((((fir_link_mask & 18374403900871474942ULL) >> 9) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)) || // up left
                         ((((fir_link_mask & 18374403900871474942ULL) << 7) & boosted_mask) && ((((other_mask & 18374403900871474942ULL) >> 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down left
-                        ((((fir_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) || // down right
-                        ((((fir_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0))) // up right
+                        ((((fir_link_mask & 9187201950435737471ULL) << 9) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask << 8) & boosted_mask) == 0)) ||   // down right
+                        ((((fir_link_mask & 9187201950435737471ULL) >> 7) & boosted_mask) && ((((other_mask & 9187201950435737471ULL) << 1) & boosted_mask) == 0 || ((other_mask >> 8) & boosted_mask) == 0)))     // up right
                         return (-32768 * (depth + 1));
                 }
             }
@@ -1779,7 +1788,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             auto it = cache[depth].find(position);
             if (it != cache[depth].end())
             {
-                ttentry entry = it->second;
+                ttentry_t entry = it->second;
                 if (__builtin_expect(entry.flag & 1, 0))
                 {
                     if (entry.score >= beta) // if current beta <= cached beta then the beta during evaluation wont change, thus we can return the current beta
@@ -1805,7 +1814,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
         {
             if (sec_link_mask & 576460752303423488ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
@@ -1825,7 +1834,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
             }
             if (sec_link_mask & 1152921504606846976ULL)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
                 temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
@@ -2077,7 +2086,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
 
             if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
             {
-                field temp = position;
+                field_t temp = position;
 
                 temp.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
                 temp.is_boosted_mask &= temp.is_fir_mask;
@@ -2104,59 +2113,41 @@ int minimax(int depth, int alpha, int beta, const bool player, field &position, 
 
 int cutoffdepth;
 
-int minimaxscout(const int depth, int alpha, int beta, const bool player, field &position)
+int minimax_scout(const int depth, int alpha, int beta, const bool player, field_t &position)
 {
     if (depth < cutoffdepth)
     {
-        vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
+        ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+        for (int i = 0; i < depth; ++i)
+            newcache[i].reserve(1024);
         return minimax(depth, alpha, beta, player, position, newcache);
     }
     if (player)
     {
-        vector<field> allmoves = possiblemoves(position, true);
-        for (int i = 0; i < allmoves.size(); ++i)
-            if (allmoves[i].fir_link > 3)
+        possible_moves_t all_moves = possiblemoves(position, true);
+        for (int i = 0; i < all_moves.moves_count; ++i)
+            if (all_moves.moves[i].fir_link > 3)
                 return (32768 * depth);
-        vector<thread> threads(allmoves.size());
-        vector<int> scores(allmoves.size());
 
-        for (int i = 0; i < allmoves.size(); ++i)
-        {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
-                                {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache); });
-        }
-        for (int i = 0; i < allmoves.size(); ++i)
-            threads[i].join();
-        int max = scores[0], index = 0;
-        for (int i = 1; i < allmoves.size(); ++i)
-        {
-            if (scores[i] > max)
-            {
-                max = scores[i];
-                index = i;
-            }
-        }
-        swap(allmoves[0], allmoves[index]);
-        alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
-        allmoves.erase(allmoves.begin());
-        threads.erase(threads.begin());
-        scores.erase(scores.begin());
+        thread threads[all_moves.moves_count];
+        int scores[all_moves.moves_count];
+        alpha = minimax_scout(depth - 1, alpha, beta, false, all_moves.moves[0]);
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
                                 {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
+                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+                for (int i = 0; i < depth; ++i)
+                    newcache[i].reserve(1024);
+                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, all_moves.moves[i], newcache);
                 if(scores[i] > alpha)
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache); });
+                    scores[i] = minimax(depth - 1, scores[i], beta, false, all_moves.moves[i], newcache); });
         }
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
             threads[i].join();
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
             if (scores[i] > alpha)
             {
@@ -2167,50 +2158,30 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
     }
     else
     {
-        vector<field> allmoves = possiblemoves(position, false);
-        for (int i = 0; i < allmoves.size(); ++i)
-            if (allmoves[i].sec_link > 3)
+        possible_moves_t all_moves = possiblemoves(position, false);
+        for (int i = 0; i < all_moves.moves_count; ++i)
+            if (all_moves.moves[i].sec_link > 3)
                 return (-32768 * depth);
-        vector<thread> threads(allmoves.size());
-        vector<int> scores(allmoves.size());
+                
+        thread threads[all_moves.moves_count];
+        int scores[all_moves.moves_count];
+        beta = minimax_scout(depth - 1, alpha, beta, true, all_moves.moves[0]);
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
                                 {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache); });
-        }
-        for (int i = 0; i < allmoves.size(); ++i)
-            threads[i].join();
-        int min = scores[0], index = 0;
-        for (int i = 1; i < allmoves.size(); ++i)
-        {
-            if (scores[i] < min)
-            {
-                min = scores[i];
-                index = i;
-            }
-        }
-        swap(allmoves[0], allmoves[index]);
-        beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
-        allmoves.erase(allmoves.begin());
-        threads.erase(threads.begin());
-        scores.erase(scores.begin());
-
-        for (int i = 0; i < allmoves.size(); ++i)
-        {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
-                                {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
+                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+                for (int i = 0; i < depth; ++i)
+                    newcache[i].reserve(1024);
+                scores[i] = minimax(depth - 1, beta - 1, beta, true, all_moves.moves[i], newcache);
                 if(scores[i] < beta)
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache); });
+                    scores[i] = minimax(depth - 1, alpha, scores[i], true, all_moves.moves[i], newcache); });
         }
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
             threads[i].join();
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
             if (beta > scores[i])
             {
@@ -2221,122 +2192,127 @@ int minimaxscout(const int depth, int alpha, int beta, const bool player, field 
     }
 }
 
-pair<field, int> minimaxmain(const int depth, int alpha, int beta, const bool player, field &position)
+minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const bool player, field_t &position)
 {
     cutoffdepth = depth - 5;
     if (player)
     {
-        vector<field> allmoves = possiblemoves(position, true);
-        for (int i = 0; i < allmoves.size(); ++i)
-            if (allmoves[i].fir_link > 3)
-                return make_pair(allmoves[i], (32768 * depth));
+        possible_moves_t all_moves = possiblemoves(position, true);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].fir_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (32768 * depth)};
 
-        vector<thread> threads(allmoves.size());
-        vector<int> scores(allmoves.size());
+        thread threads[all_moves.moves_count];
+        int scores[all_moves.moves_count];
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        field_t bestfield = all_moves.moves[0];
+        alpha = minimax_scout(depth - 1, alpha, beta, false, all_moves.moves[0]);
+
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
+            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
                                 {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, false, allmoves[i], newcache); });
-        }
-        for (int i = 0; i < allmoves.size(); ++i)
-            threads[i].join();
-        int max = scores[0], index = 0;
-        for (int i = 1; i < allmoves.size(); ++i)
-        {
-            if (scores[i] > max)
-            {
-                max = scores[i];
-                index = i;
-            }
-        }
-        swap(allmoves[0], allmoves[index]);
-        field bestfield = allmoves[0];
-        alpha = minimaxscout(depth - 1, alpha, beta, false, allmoves[0]);
-        allmoves.erase(allmoves.begin());
-        threads.erase(threads.begin());
-        scores.erase(scores.begin());
-
-        for (int i = 0; i < allmoves.size(); ++i)
-        {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
-                                {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, allmoves[i], newcache);
+                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+                for (int i = 0; i < depth; ++i)
+                    newcache[i].reserve(1024);
+                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, all_moves.moves[i], newcache);
                 if(scores[i] > alpha)
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, allmoves[i], newcache); });
+                    scores[i] = minimax(depth - 1, scores[i], beta, false, all_moves.moves[i], newcache); });
         }
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
             threads[i].join();
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
             if (scores[i] > alpha)
             {
                 alpha = scores[i];
-                bestfield = allmoves[i];
+                bestfield = all_moves.moves[i];
             }
         }
-        return make_pair(bestfield, alpha);
+        return (minimax_main_result_t){.best_field = bestfield, .evaluation = alpha};
     }
     else
     {
-        vector<field> allmoves = possiblemoves(position, false);
-        for (int i = 0; i < allmoves.size(); ++i)
-            if (allmoves[i].sec_link > 3)
-                return make_pair(allmoves[i], (-32768 * depth));
+        possible_moves_t all_moves = possiblemoves(position, false);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].sec_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
 
-        vector<thread> threads(allmoves.size());
-        vector<int> scores(allmoves.size());
-        for (int i = 0; i < allmoves.size(); ++i)
+        thread threads[all_moves.moves_count];
+        int scores[all_moves.moves_count];
+
+        field_t bestfield = all_moves.moves[0];
+        beta = minimax_scout(depth - 1, alpha, beta, true, all_moves.moves[0]);
+
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &allmoves]()
+            threads[i] = thread([&scores, i, depth, &alpha, &beta, &all_moves]()
                                 {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 3, alpha, beta, true, allmoves[i], newcache); });
-        }
-        for (int i = 0; i < allmoves.size(); ++i)
-            threads[i].join();
-
-        int min = scores[0], index = 0;
-        for (int i = 1; i < allmoves.size(); ++i)
-        {
-            if (scores[i] < min)
-            {
-                min = scores[i];
-                index = i;
-            }
-        }
-        swap(allmoves[0], allmoves[index]);
-
-        field bestfield = allmoves[0];
-        beta = minimaxscout(depth - 1, alpha, beta, true, allmoves[0]);
-        allmoves.erase(allmoves.begin());
-        threads.erase(threads.begin());
-        scores.erase(scores.begin());
-
-        for (int i = 0; i < allmoves.size(); ++i)
-        {
-            threads[i] = thread([&scores, i, depth, &alpha, &beta, &allmoves]()
-                                {
-                vector<ankerl::unordered_dense::map<field, ttentry, field>> newcache(depth, ankerl::unordered_dense::map<field, ttentry, field>(1024));
-                scores[i] = minimax(depth - 1, beta - 1, beta, true, allmoves[i], newcache);
+                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+                for (int i = 0; i < depth; ++i)
+                    newcache[i].reserve(1024);
+                scores[i] = minimax(depth - 1, beta - 1, beta, true, all_moves.moves[i], newcache);
                 if(scores[i] < beta)
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, allmoves[i], newcache); });
+                    scores[i] = minimax(depth - 1, alpha, scores[i], true, all_moves.moves[i], newcache); });
         }
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
             threads[i].join();
 
-        for (int i = 0; i < allmoves.size(); ++i)
+        for (int i = 1; i < all_moves.moves_count; ++i)
         {
             if (beta > scores[i])
             {
                 beta = scores[i];
-                bestfield = allmoves[i];
+                bestfield = all_moves.moves[i];
             }
         }
-        return make_pair(bestfield, beta);
+        return (minimax_main_result_t){.best_field = bestfield, .evaluation = beta};
+    }
+}
+
+minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, const bool player, field_t &position)
+{
+    if (player)
+    {
+        possible_moves_t all_moves = possiblemoves(position, true);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].fir_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (32768 * depth)};
+
+        field_t best_field = all_moves.moves[0];
+        ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+        for (int i = 0; i < depth; ++i)
+            newcache[i].reserve(1024);
+
+        for (int i = 0; i < all_moves.moves_count; ++i)
+        {
+            int childres = minimax(depth - 1, alpha, beta, false, all_moves.moves[i], newcache);
+            best_field = (childres > alpha) ? all_moves.moves[i] : best_field;
+            alpha = (childres > alpha) ? childres : alpha;
+        }
+
+        return (minimax_main_result_t){.best_field = best_field, .evaluation = alpha};
+    }
+    else
+    {
+        possible_moves_t all_moves = possiblemoves(position, false);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].sec_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
+
+        field_t best_field = all_moves.moves[0];
+        ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
+        for (int i = 0; i < depth; ++i)
+            newcache[i].reserve(1024);
+
+        for (int i = 0; i < all_moves.moves_count; ++i)
+        {
+            int childres = minimax(depth - 1, alpha, beta, true, all_moves.moves[i], newcache);
+            best_field = (childres < beta) ? all_moves.moves[i] : best_field;
+            beta = (childres < beta) ? childres : beta;
+        }
+
+        return (minimax_main_result_t){.best_field = best_field, .evaluation = beta};
     }
 }
 
@@ -2344,36 +2320,37 @@ int main()
 {
     struct timespec start, stop;
     // srand(time(NULL));
-    field pos;
-    // clock_gettime(CLOCK_MONOTONIC, &start);
-    // int checksum = 0;
-    // for (int i = 0; i < 70; ++i)
-    // {
-    //     struct timespec start_it, stop_it;
-    //     int fir, sec;
-    //     field_construct(pos, indexes[69], indexes[i]);
-    //     clock_gettime(CLOCK_MONOTONIC, &start_it);
-    //     pair<field, int> move = minimaxmain(12, MIN, MAX, true, pos);
-    //     clock_gettime(CLOCK_MONOTONIC, &stop_it);
-    //     printf("%d     %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
-    //     fir = move.second;
-    //     checksum ^= (move.second << (indexes[i] & 1));
-    //     field_construct(pos, indexes[i], indexes[69]);
-    //     clock_gettime(CLOCK_MONOTONIC, &start_it);
-    //     move = minimaxmain(12, MIN, MAX, false, pos);
-    //     clock_gettime(CLOCK_MONOTONIC, &stop_it);
-    //     printf("%d     %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
-    //     sec = move.second;
-    //     if (fir != -1 * sec)
-    //     {
-    //         printf("Eval error\n");
-    //         exit(1);
-    //     }
-    //     checksum ^= (move.second << (indexes[i] & 1));
-    // }
-    // clock_gettime(CLOCK_MONOTONIC, &stop);
-    // printf("%ld\nhash: %d\n", (stop.tv_sec * 1000000000l + stop.tv_nsec - start.tv_sec * 1000000000l - start.tv_nsec) / 1000000, checksum);
-    // return 0;
+    field_t pos;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    int checksum = 0;
+    for (int i = 0; i < 70; ++i)
+    {
+        struct timespec start_it, stop_it;
+        int fir, sec;
+        field_construct(pos, indexes[69], indexes[i]);
+        clock_gettime(CLOCK_MONOTONIC, &start_it);
+        minimax_main_result_t move = minimax_main(18, MIN, MAX, true, pos);
+        clock_gettime(CLOCK_MONOTONIC, &stop_it);
+        printf("%d     %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        fir = move.evaluation;
+        checksum ^= (move.evaluation << (indexes[i] & 1));
+        field_construct(pos, indexes[i], indexes[69]);
+        clock_gettime(CLOCK_MONOTONIC, &start_it);
+        move = minimax_main(18, MIN, MAX, false, pos);
+        clock_gettime(CLOCK_MONOTONIC, &stop_it);
+        printf("%d     %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        sec = move.evaluation;
+        if (fir != -1 * sec)
+        {
+            printf("Eval error\n");
+            exit(1);
+        }
+        checksum ^= (move.evaluation << (indexes[i] & 1));
+        break;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &stop);
+    printf("%ld\nhash: %d\n", (stop.tv_sec * 1000000000l + stop.tv_nsec - start.tv_sec * 1000000000l - start.tv_nsec) / 1000000, checksum);
+    return 0;
     field_construct(pos, indexes[15], indexes[15]);
     pos.print_field();
     printf("\n");
@@ -2383,11 +2360,11 @@ int main()
         struct timespec start_it, stop_it;
 
         clock_gettime(CLOCK_MONOTONIC, &start_it);
-        pair<field, int> move = minimaxmain(16, MIN, MAX, false, pos);
+        minimax_main_result_t move = minimax_main(18, MIN, MAX, true, pos);
         clock_gettime(CLOCK_MONOTONIC, &stop_it);
 
-        printf("Minimized score: %d      %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
-        pos = move.first;
+        printf("Minimized score: %d      %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        pos = move.best_field;
         pos.print_field();
         printf("\n");
         if (pos.sec_link == 4)
@@ -2403,11 +2380,11 @@ int main()
             break;
         }
         clock_gettime(CLOCK_MONOTONIC, &start_it);
-        move = minimaxmain(16, MIN, MAX, true, pos);
+        move = minimax_main(18, MIN, MAX, false, pos);
         clock_gettime(CLOCK_MONOTONIC, &stop_it);
 
-        printf("Maximized score: %d      %ld\n", move.second, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
-        pos = move.first;
+        printf("Maximized score: %d      %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        pos = move.best_field;
         pos.print_field();
         printf("\n");
         if (pos.fir_link == 4)
