@@ -1,9 +1,6 @@
 #include <ankerl/unordered_dense.h>
-#include <thread>
 #include <pthread.h>
 #include <time.h>
-
-using namespace std;
 
 const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
 
@@ -14,23 +11,6 @@ const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
 #define MAX 1000000
 
 #define MIN_CACHE_DEPTH 2
-
-#define STATE_IS_BOOST_AVAILABLE_FIR (1u)
-#define STATE_IS_BOOST_AVAILABLE_FIR_SHIFT (0)
-#define STATE_IS_BOOST_AVAILABLE_SEC (2u)
-#define STATE_IS_BOOST_AVAILABLE_SEC_SHIFT (1)
-#define STATE_IS_SWAP_AVAILABLE_FIR (4u)
-#define STATE_IS_SWAP_AVAILABLE_FIR_SHIFT (2)
-#define STATE_IS_SWAP_AVAILABLE_SEC (8u)
-#define STATE_IS_SWAP_AVAILABLE_SEC_SHIFT (3)
-#define STATE_IS_CHECKER_AVAILABLE_FIR (16u)
-#define STATE_IS_CHECKER_AVAILABLE_FIR_SHIFT (4)
-#define STATE_IS_CHECKER_AVAILABLE_SEC (32u)
-#define STATE_IS_CHECKER_AVAILABLE_SEC_SHIFT (5)
-#define STATE_IS_FIREWALL_AVAILABLE_FIR (64u)
-#define STATE_IS_FIREWALL_AVAILABLE_FIR_SHIFT (6)
-#define STATE_IS_FIREWALL_AVAILABLE_SEC (128u)
-#define STATE_IS_FIREWALL_AVAILABLE_SEC_SHIFT (7)
 
 #define ITERATION_CURRENT_IS_FIRST_UNKNOWN 0
 #define ITERATION_CURRENT_IS_FIRST_LINK 1
@@ -46,10 +26,19 @@ struct field_t
     uint64_t is_link_mask;
     uint64_t is_boosted_mask;
 
-    uint8_t fir_link;
-    uint8_t sec_link;
-    uint8_t fir_virus;
-    uint8_t sec_virus;
+    uint8_t fir_link : 4;
+    uint8_t sec_link : 4;
+    uint8_t fir_virus : 4;
+    uint8_t sec_virus : 4;
+
+    uint8_t is_boost_available_fir : 1;
+    uint8_t is_boost_available_sec : 1;
+    uint8_t is_checker_available_fir : 1;
+    uint8_t is_checker_available_sec : 1;
+    uint8_t is_swap_available_fir : 1;
+    uint8_t is_swap_available_sec : 1;
+    uint8_t is_firewall_available_fir : 1;
+    uint8_t is_firewall_available_sec : 1;
 
     uint8_t forward_adv_fir;
     uint8_t forward_adv_sec;
@@ -57,238 +46,20 @@ struct field_t
     uint8_t firewall_fir;
     uint8_t firewall_sec;
 
-    uint8_t state_mask;
-
     int evaluate() // maximize
     {
         return ((1024 << fir_link) - (2048 << fir_virus) - (1024 << sec_link) + (2048 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec;
     }
+
     size_t operator()(const field_t &s) const
     {
         return s.is_fir_mask | s.is_sec_mask;
     }
-    bool operator!=(const field_t &other) const
-    {
-        if (is_sec_mask != other.is_sec_mask)
-        {
-            printf("Mismatch in is_sec_mask\n");
-            return true;
-        }
-        if (is_link_mask != other.is_link_mask)
-        {
-            printf("Mismatch in is_link_mask\n");
-            return true;
-        }
-        if (is_fir_mask != other.is_fir_mask)
-        {
-            printf("Mismatch in is_fir_mask\n");
-            return true;
-        }
-        if (is_boosted_mask != other.is_boosted_mask)
-        {
-            printf("Mismatch in is_boosted_mask\n");
-            return true;
-        }
-        if (state_mask != other.state_mask)
-        {
-            printf("Mismatch in state_mask\n");
-            return true;
-        }
-        if (fir_virus != other.fir_virus)
-        {
-            printf("Mismatch in fir_virus\n");
-            return true;
-        }
-        if (fir_link != other.fir_link)
-        {
-            printf("Mismatch in fir_link\n");
-            return true;
-        }
-        if (forward_adv_fir != other.forward_adv_fir)
-        {
-            printf("Mismatch in forward_adv_fir %d != %d\n", forward_adv_fir, other.forward_adv_fir);
-            return true;
-        }
-        if (forward_adv_sec != other.forward_adv_sec)
-        {
-            printf("Mismatch in forward_adv_sec\n");
-            return true;
-        }
-        if (sec_virus != other.sec_virus)
-        {
-            printf("Mismatch in sec_virus\n");
-            return true;
-        }
-        if (sec_link != other.sec_link)
-        {
-            printf("Mismatch in sec_link\n");
-            return true;
-        }
-        return false;
-    }
-    bool operator==(const field_t &other) const
-    {
-        return (is_sec_mask == other.is_sec_mask && is_link_mask == other.is_link_mask &&
-                is_fir_mask == other.is_fir_mask && is_boosted_mask == other.is_boosted_mask &&
-                state_mask == other.state_mask &&
-                fir_virus == other.fir_virus &&
-                fir_link == other.fir_link &&
-                forward_adv_fir == other.forward_adv_fir &&
-                forward_adv_sec == other.forward_adv_sec &&
-                sec_virus == other.sec_virus &&
-                sec_link == other.sec_link);
-    }
 
-    uint64_t reverse_mask(uint64_t mask)
-    {
-        uint64_t res = 0;
-
-        while (mask)
-        {
-            int set_bit = __builtin_ctzll(mask);
-
-            res |= (1ULL << (63 - set_bit));
-
-            mask ^= (1ULL << set_bit);
-        }
-
-        return res;
-    }
-
-    field_t reverse_field()
-    {
-        field_t new_field;
-        new_field.fir_link = sec_link;
-        new_field.fir_virus = sec_virus;
-        new_field.sec_link = fir_link;
-        new_field.sec_virus = fir_virus;
-        new_field.firewall_fir = firewall_sec;
-        new_field.firewall_sec = firewall_fir;
-        new_field.state_mask = 0;
-
-        new_field.state_mask |= ((state_mask & STATE_IS_BOOST_AVAILABLE_FIR) >> STATE_IS_BOOST_AVAILABLE_FIR_SHIFT) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
-        new_field.state_mask |= ((state_mask & STATE_IS_BOOST_AVAILABLE_SEC) >> STATE_IS_BOOST_AVAILABLE_SEC_SHIFT) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
-
-        new_field.state_mask |= ((state_mask & STATE_IS_SWAP_AVAILABLE_FIR) >> STATE_IS_SWAP_AVAILABLE_FIR_SHIFT) << STATE_IS_SWAP_AVAILABLE_SEC_SHIFT;
-        new_field.state_mask |= ((state_mask & STATE_IS_SWAP_AVAILABLE_SEC) >> STATE_IS_SWAP_AVAILABLE_SEC_SHIFT) << STATE_IS_SWAP_AVAILABLE_FIR_SHIFT;
-
-        new_field.state_mask |= ((state_mask & STATE_IS_CHECKER_AVAILABLE_FIR) >> STATE_IS_CHECKER_AVAILABLE_FIR_SHIFT) << STATE_IS_CHECKER_AVAILABLE_SEC_SHIFT;
-        new_field.state_mask |= ((state_mask & STATE_IS_CHECKER_AVAILABLE_SEC) >> STATE_IS_CHECKER_AVAILABLE_SEC_SHIFT) << STATE_IS_CHECKER_AVAILABLE_FIR_SHIFT;
-
-        new_field.state_mask |= ((state_mask & STATE_IS_FIREWALL_AVAILABLE_FIR) >> STATE_IS_FIREWALL_AVAILABLE_FIR_SHIFT) << STATE_IS_FIREWALL_AVAILABLE_SEC_SHIFT;
-        new_field.state_mask |= ((state_mask & STATE_IS_FIREWALL_AVAILABLE_SEC) >> STATE_IS_FIREWALL_AVAILABLE_SEC_SHIFT) << STATE_IS_FIREWALL_AVAILABLE_FIR_SHIFT;
-
-        new_field.is_fir_mask = reverse_mask(is_sec_mask);
-        new_field.is_sec_mask = reverse_mask(is_fir_mask);
-        new_field.is_boosted_mask = reverse_mask(is_fir_mask & is_boosted_mask) | reverse_mask(is_sec_mask & is_boosted_mask);
-        new_field.is_link_mask = reverse_mask(is_fir_mask & is_link_mask) | reverse_mask(is_sec_mask & is_link_mask);
-
-        int sum = 0;
-        uint64_t mask = new_field.is_fir_mask;
-
-        while (mask)
-        {
-            int pos = __builtin_ctzll(mask);
-
-            sum += 7 - (pos >> 3);
-
-            mask ^= (1ULL << pos);
-        }
-
-        new_field.forward_adv_fir = sum;
-
-        sum = 0;
-        mask = new_field.is_sec_mask;
-
-        while (mask)
-        {
-            int pos = __builtin_ctzll(mask);
-
-            sum += (pos >> 3);
-
-            mask ^= (1ULL << pos);
-        }
-
-        new_field.forward_adv_sec = sum;
-
-        return new_field;
-    }
-
-    bool check_integrity()
-    {
-        if (((state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0 && (is_fir_mask & is_boosted_mask) == 0) || ((state_mask & STATE_IS_BOOST_AVAILABLE_FIR) && (is_fir_mask & is_boosted_mask)))
-        {
-            printf("failed 5\n");
-            return false;
-        }
-
-        if (((state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0 && (is_sec_mask & is_boosted_mask) == 0) || ((state_mask & STATE_IS_BOOST_AVAILABLE_SEC) && (is_sec_mask & is_boosted_mask)))
-        {
-            printf("failed 6\n");
-            return false;
-        }
-
-        if (is_fir_mask & is_sec_mask)
-        {
-            printf("failed 7\n");
-            return false;
-        }
-
-        if (__builtin_popcountll(is_fir_mask & is_boosted_mask) > 1)
-        {
-            printf("failed 1\n");
-            return false;
-        }
-
-        if (__builtin_popcountll(is_sec_mask & is_boosted_mask) > 1)
-        {
-            printf("failed 2\n");
-            return false;
-        }
-
-        int sum = 0;
-
-        uint64_t mask = is_fir_mask;
-
-        while (mask)
-        {
-            int pos = __builtin_ctzll(mask);
-
-            sum += 7 - (pos >> 3);
-
-            mask ^= (1ULL << pos);
-        }
-
-        if (sum != forward_adv_fir)
-        {
-            printf("failed 3, %d != %d\n", sum, forward_adv_fir);
-            return false;
-        }
-
-        sum = 0;
-        mask = is_sec_mask;
-
-        while (mask)
-        {
-            int pos = __builtin_ctzll(mask);
-
-            sum += (pos >> 3);
-
-            mask ^= (1ULL << pos);
-        }
-
-        if (sum != forward_adv_sec)
-        {
-            printf("failed 4\n");
-            return false;
-        }
-
-        return true;
-    }
+    bool operator==(const field_t &) const = default;
 
     void print_field()
     {
-        // printf("fir_boost: %d, sec_boost: %d\n", (state_mask & STATE_IS_BOOST_AVAILABLE_FIR) >> STATE_IS_BOOST_AVAILABLE_FIR_SHIFT, (state_mask & STATE_IS_BOOST_AVAILABLE_SEC) >> STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);
         printf("Virus: %d         Link: %d\n", fir_virus, fir_link);
         for (int i = 63; i >= 0; --i)
         {
@@ -356,6 +127,15 @@ typedef struct
     int evaluation;
 } minimax_main_result_t;
 
+typedef struct
+{
+    field_t *field;
+    int score;
+    int depth;
+    int alpha;
+    int beta;
+} worker_t;
+
 void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
 {
     f.is_sec_mask = 0;
@@ -371,7 +151,14 @@ void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
     f.forward_adv_fir = 2;
     f.forward_adv_sec = 2;
 
-    f.state_mask = 255;
+    f.is_boost_available_fir = 1;
+    f.is_boost_available_sec = 1;
+    f.is_checker_available_fir = 1;
+    f.is_checker_available_sec = 1;
+    f.is_swap_available_fir = 1;
+    f.is_swap_available_sec = 1;
+    f.is_firewall_available_fir = 1;
+    f.is_firewall_available_sec = 1;
 
     for (int i = 0; i < 8; ++i)
     {
@@ -391,7 +178,7 @@ void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
+                temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
                 temp.forward_adv_fir += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -424,7 +211,7 @@ void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
+                temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
                 temp.forward_adv_fir += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -482,7 +269,7 @@ void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
+                temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
                 temp.forward_adv_sec += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -515,7 +302,7 @@ void field_construct(field_t &f, uint8_t pos_fir, uint8_t pos_sec)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
+                temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
                 temp.forward_adv_sec += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -584,7 +371,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
+                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1);
                 temp.is_boosted_mask &= ~8ULL;
                 temp.is_fir_mask &= ~8ULL;
                 temp.is_link_mask &= ~8ULL;
@@ -597,7 +384,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
+                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1);
                 temp.is_boosted_mask &= ~16ULL;
                 temp.is_fir_mask &= ~16ULL;
                 temp.is_link_mask &= ~16ULL;
@@ -607,7 +394,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
             }
         }
 
-        if (position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR)
+        if (position.is_boost_available_fir)
         {
             uint64_t temp = fir_virus_mask;
 
@@ -616,9 +403,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 uint64_t pos = (1ULL << __builtin_ctzll(temp));
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 0;
                 res.moves[res.moves_count++] = position;
-                position.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 1;
                 position.is_boosted_mask ^= pos;
 
                 temp ^= pos;
@@ -631,9 +418,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 uint64_t pos = (1ULL << __builtin_ctzll(temp));
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 0;
                 res.moves[res.moves_count++] = position;
-                position.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 1;
                 position.is_boosted_mask ^= pos;
 
                 temp ^= pos;
@@ -642,9 +429,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
 
         const uint64_t firmask = position.is_fir_mask, secmask = position.is_sec_mask;
 
-        if (position.state_mask & STATE_IS_FIREWALL_AVAILABLE_SEC)
+        if (position.is_firewall_available_sec)
         {
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
+            if (position.is_boost_available_fir == 0)
             {
                 const uint64_t cur_pos_bitboard = firmask & position.is_boosted_mask;
                 const uint64_t other = firmask | secmask;
@@ -822,11 +609,11 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 temp ^= cur_pos_bitboard;
             }
 
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
+            if (position.is_boost_available_fir == 0)
             {
                 field_t temp = position;
 
-                temp.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
+                temp.is_boost_available_fir = 1;
                 temp.is_boosted_mask &= temp.is_sec_mask;
 
                 res.moves[res.moves_count++] = temp;
@@ -846,7 +633,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
+                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1);
                 temp.is_boosted_mask &= ~576460752303423488ULL;
                 temp.is_sec_mask &= ~576460752303423488ULL;
                 temp.is_link_mask &= ~576460752303423488ULL;
@@ -859,7 +646,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
+                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1);
                 temp.is_boosted_mask &= ~1152921504606846976ULL;
                 temp.is_sec_mask &= ~1152921504606846976ULL;
                 temp.is_link_mask &= ~1152921504606846976ULL;
@@ -869,7 +656,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
             }
         }
 
-        if (position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC)
+        if (position.is_boost_available_sec)
         {
             uint64_t temp = sec_virus_mask;
 
@@ -878,9 +665,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 0;
                 res.moves[res.moves_count++] = position;
-                position.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 1;
                 position.is_boosted_mask ^= pos;
 
                 temp ^= pos;
@@ -893,9 +680,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask &= ~STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 0;
                 res.moves[res.moves_count++] = position;
-                position.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 1;
                 position.is_boosted_mask ^= pos;
 
                 temp ^= pos;
@@ -903,9 +690,9 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
         }
 
         const uint64_t firmask = (fir_link_mask | fir_virus_mask), secmask = (sec_link_mask | sec_virus_mask);
-        if (position.state_mask & STATE_IS_FIREWALL_AVAILABLE_FIR)
+        if (position.is_firewall_available_fir)
         {
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
+            if (position.is_boost_available_sec == 0)
             {
                 const uint64_t cur_pos_bitboard = secmask & position.is_boosted_mask;
                 const uint64_t other = firmask | secmask;
@@ -1083,11 +870,11 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 temp ^= cur_pos_bitboard;
             }
 
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
+            if (position.is_boost_available_sec == 0)
             {
                 field_t temp = position;
 
-                temp.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
+                temp.is_boost_available_sec = 1;
                 temp.is_boosted_mask &= temp.is_fir_mask;
 
                 res.moves[res.moves_count++] = temp;
@@ -1162,7 +949,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
+                temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
                 temp.forward_adv_fir += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -1202,7 +989,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT);                     \
+                temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
                 temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
                 temp.forward_adv_fir += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -1274,7 +1061,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
+                temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                     \
                 temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
                 temp.forward_adv_sec += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -1314,7 +1101,7 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
                 field_t temp = position;                                                                                                                           \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp.state_mask |= ((((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT);                     \
+                temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                     \
                 temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
                 temp.forward_adv_sec += forward_adv;                                                                                                               \
                 if (is_boosted)                                                                                                                                    \
@@ -1380,16 +1167,16 @@ possible_moves_t possiblemoves(field_t &position, const bool player)
 
 int minimax(int depth, int alpha, int beta, const bool player, field_t &position, ankerl::unordered_dense::map<field_t, ttentry_t, field_t> *cache)
 {
-    uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
-    uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
-    uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
-    uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
-
     if (player)
     {
         if (depth == 0)
             return position.evaluate();
         --depth;
+
+        uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
+        uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
+        uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
+        uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
 
         if (position.fir_link == 3)
         {
@@ -1403,7 +1190,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                     (((sec_link_mask & 18374403900871474942ULL) >> 1) & firmask) || // left
                     (((sec_link_mask & 9187201950435737471ULL) << 1) & firmask))    // right
                     return (32768 * (depth + 1));
-                if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
+                if (position.is_boost_available_fir == 0)
                 {
                     uint64_t boosted_mask = position.is_boosted_mask & firmask;
                     uint64_t other_mask = sec_virus_mask | firmask;
@@ -1433,7 +1220,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                         return alpha;
                     if (entry.flag > 1) // if the cached alpha is exact && it is bigger than the current alpha (because of the condition above) then we can return it
                         return entry.score;
-                    beta = min(beta, entry.score);
+                    beta = (beta > entry.score) ? entry.score : beta;
                     // cached alpha is lower bound
                 }
                 else
@@ -1455,7 +1242,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
+                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1);
                 temp.is_boosted_mask &= ~8ULL;
                 temp.is_fir_mask &= ~8ULL;
                 temp.is_link_mask &= ~8ULL;
@@ -1475,7 +1262,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 field_t temp = position;
 
                 temp.forward_adv_fir -= 7 - (__builtin_ctzll(16ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_FIR_SHIFT;
+                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1);
                 temp.is_boosted_mask &= ~16ULL;
                 temp.is_fir_mask &= ~16ULL;
                 temp.is_link_mask &= ~16ULL;
@@ -1492,7 +1279,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
             }
         }
 
-        if (position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR)
+        if (position.is_boost_available_fir)
         {
             uint64_t temp = fir_virus_mask;
 
@@ -1501,9 +1288,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 0;
                 int reschild = minimax(depth, alpha, beta, false, position, cache);
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 1;
                 position.is_boosted_mask ^= pos;
 
                 alpha = (reschild > alpha) ? reschild : alpha;
@@ -1524,9 +1311,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 0;
                 int reschild = minimax(depth, alpha, beta, false, position, cache);
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_FIR;
+                position.is_boost_available_fir = 1;
                 position.is_boosted_mask ^= pos;
 
                 alpha = (reschild > alpha) ? reschild : alpha;
@@ -1543,9 +1330,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
 
         const uint64_t firmask = position.is_fir_mask, secmask = position.is_sec_mask;
 
-        if (position.state_mask & STATE_IS_FIREWALL_AVAILABLE_SEC)
+        if (position.is_firewall_available_sec)
         {
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
+            if (position.is_boost_available_fir == 0)
             {
                 const uint64_t cur_pos_bitboard = firmask & position.is_boosted_mask;
                 const uint64_t other = firmask | secmask;
@@ -1723,11 +1510,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 temp ^= cur_pos_bitboard;
             }
 
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_FIR) == 0)
+            if (position.is_boost_available_fir == 0)
             {
                 field_t temp = position;
 
-                temp.state_mask |= STATE_IS_BOOST_AVAILABLE_FIR;
+                temp.is_boost_available_fir = 1;
                 temp.is_boosted_mask &= temp.is_sec_mask;
 
                 int reschild = minimax(depth, alpha, beta, false, temp, cache);
@@ -1753,6 +1540,12 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
         if (depth == 0)
             return position.evaluate();
         --depth;
+
+        uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
+        uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
+        uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
+        uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
+
         if (position.sec_link == 3)
         {
             if (sec_link_mask & 1729382256910270464ULL)
@@ -1765,7 +1558,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                     (((fir_link_mask & 18374403900871474942ULL) >> 1) & secmask) || // left
                     (((fir_link_mask & 9187201950435737471ULL) << 1) & secmask))    // right
                     return (-32768 * (depth + 1));
-                if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
+                if (position.is_boost_available_sec == 0)
                 {
                     uint64_t boosted_mask = position.is_boosted_mask & secmask;
                     uint64_t other_mask = fir_virus_mask | secmask;
@@ -1795,7 +1588,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                         return beta;
                     if (entry.flag > 1) // if the cached beta is exact && it is smaller than the current beta (because of the condition above) then we can return it
                         return entry.score;
-                    alpha = max(alpha, entry.score);
+                    alpha = (alpha < entry.score) ? entry.score : alpha;
                     // cached beta is upper bound
                 }
                 else
@@ -1817,7 +1610,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
+                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1);
                 temp.is_boosted_mask &= ~576460752303423488ULL;
                 temp.is_sec_mask &= ~576460752303423488ULL;
                 temp.is_link_mask &= ~576460752303423488ULL;
@@ -1837,7 +1630,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 field_t temp = position;
 
                 temp.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
-                temp.state_mask |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1) << STATE_IS_BOOST_AVAILABLE_SEC_SHIFT;
+                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1);
                 temp.is_boosted_mask &= ~1152921504606846976ULL;
                 temp.is_sec_mask &= ~1152921504606846976ULL;
                 temp.is_link_mask &= ~1152921504606846976ULL;
@@ -1854,7 +1647,7 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
             }
         }
 
-        if (position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC)
+        if (position.is_boost_available_sec)
         {
             uint64_t temp = sec_virus_mask;
 
@@ -1863,9 +1656,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 0;
                 int reschild = minimax(depth, alpha, beta, true, position, cache);
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 1;
                 position.is_boosted_mask ^= pos;
 
                 beta = (reschild < beta) ? reschild : beta;
@@ -1886,9 +1679,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
                 position.is_boosted_mask ^= pos;
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 0;
                 int reschild = minimax(depth, alpha, beta, true, position, cache);
-                position.state_mask ^= STATE_IS_BOOST_AVAILABLE_SEC;
+                position.is_boost_available_sec = 1;
                 position.is_boosted_mask ^= pos;
 
                 beta = (reschild < beta) ? reschild : beta;
@@ -1904,9 +1697,9 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
         }
 
         const uint64_t firmask = (fir_link_mask | fir_virus_mask), secmask = (sec_link_mask | sec_virus_mask);
-        if (position.state_mask & STATE_IS_FIREWALL_AVAILABLE_FIR)
+        if (position.is_firewall_available_fir)
         {
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
+            if (position.is_boost_available_sec == 0)
             {
                 const uint64_t cur_pos_bitboard = secmask & position.is_boosted_mask;
                 const uint64_t other = firmask | secmask;
@@ -2084,11 +1877,11 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
                 temp ^= cur_pos_bitboard;
             }
 
-            if ((position.state_mask & STATE_IS_BOOST_AVAILABLE_SEC) == 0)
+            if (position.is_boost_available_sec == 0)
             {
                 field_t temp = position;
 
-                temp.state_mask |= STATE_IS_BOOST_AVAILABLE_SEC;
+                temp.is_boost_available_sec = 1;
                 temp.is_boosted_mask &= temp.is_fir_mask;
 
                 int reschild = minimax(depth, alpha, beta, true, temp, cache);
@@ -2113,6 +1906,32 @@ int minimax(int depth, int alpha, int beta, const bool player, field_t &position
 
 int cutoffdepth;
 
+void *maximize_worker(void *arg)
+{
+    worker_t *worker_data = (worker_t *)arg;
+
+    ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[worker_data->depth];
+    for (int i = 0; i < worker_data->depth; ++i)
+        newcache[i].reserve(1024);
+    worker_data->score = minimax(worker_data->depth - 1, worker_data->alpha, worker_data->alpha + 1, false, *worker_data->field, newcache);
+    if (worker_data->score > worker_data->alpha)
+        worker_data->score = minimax(worker_data->depth - 1, worker_data->score, worker_data->beta, false, *worker_data->field, newcache);
+    return NULL;
+}
+
+void *minimize_worker(void *arg)
+{
+    worker_t *worker_data = (worker_t *)arg;
+
+    ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[worker_data->depth];
+    for (int i = 0; i < worker_data->depth; ++i)
+        newcache[i].reserve(1024);
+    worker_data->score = minimax(worker_data->depth - 1, worker_data->beta - 1, worker_data->beta, true, *worker_data->field, newcache);
+    if (worker_data->score < worker_data->beta)
+        worker_data->score = minimax(worker_data->depth - 1, worker_data->alpha, worker_data->score, true, *worker_data->field, newcache);
+    return NULL;
+}
+
 int minimax_scout(const int depth, int alpha, int beta, const bool player, field_t &position)
 {
     if (depth < cutoffdepth)
@@ -2129,29 +1948,28 @@ int minimax_scout(const int depth, int alpha, int beta, const bool player, field
             if (all_moves.moves[i].fir_link > 3)
                 return (32768 * depth);
 
-        thread threads[all_moves.moves_count];
-        int scores[all_moves.moves_count];
+        pthread_t threads[all_moves.moves_count];
+        worker_t args[all_moves.moves_count];
         alpha = minimax_scout(depth - 1, alpha, beta, false, all_moves.moves[0]);
 
-        for (int i = 1; i < all_moves.moves_count; ++i)
+        for (long i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
-                                {
-                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
-                for (int i = 0; i < depth; ++i)
-                    newcache[i].reserve(1024);
-                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, all_moves.moves[i], newcache);
-                if(scores[i] > alpha)
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, all_moves.moves[i], newcache); });
+            args[i].alpha = alpha;
+            args[i].beta = beta;
+            args[i].depth = depth;
+            args[i].field = &all_moves.moves[i];
+
+            pthread_create(&threads[i], NULL, maximize_worker, (void *)&args[i]);
         }
+
         for (int i = 1; i < all_moves.moves_count; ++i)
-            threads[i].join();
+            pthread_join(threads[i], NULL);
 
         for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            if (scores[i] > alpha)
+            if (args[i].score > alpha)
             {
-                alpha = scores[i];
+                alpha = args[i].score;
             }
         }
         return alpha;
@@ -2162,30 +1980,29 @@ int minimax_scout(const int depth, int alpha, int beta, const bool player, field
         for (int i = 0; i < all_moves.moves_count; ++i)
             if (all_moves.moves[i].sec_link > 3)
                 return (-32768 * depth);
-                
-        thread threads[all_moves.moves_count];
-        int scores[all_moves.moves_count];
+
+        pthread_t threads[all_moves.moves_count];
+        worker_t args[all_moves.moves_count];
         beta = minimax_scout(depth - 1, alpha, beta, true, all_moves.moves[0]);
 
-        for (int i = 1; i < all_moves.moves_count; ++i)
+        for (long i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
-                                {
-                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
-                for (int i = 0; i < depth; ++i)
-                    newcache[i].reserve(1024);
-                scores[i] = minimax(depth - 1, beta - 1, beta, true, all_moves.moves[i], newcache);
-                if(scores[i] < beta)
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, all_moves.moves[i], newcache); });
+            args[i].alpha = alpha;
+            args[i].beta = beta;
+            args[i].depth = depth;
+            args[i].field = &all_moves.moves[i];
+
+            pthread_create(&threads[i], NULL, minimize_worker, (void *)&args[i]);
         }
+
         for (int i = 1; i < all_moves.moves_count; ++i)
-            threads[i].join();
+            pthread_join(threads[i], NULL);
 
         for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            if (beta > scores[i])
+            if (beta > args[i].score)
             {
-                beta = scores[i];
+                beta = args[i].score;
             }
         }
         return beta;
@@ -2202,30 +2019,30 @@ minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const b
             if (all_moves.moves[i].fir_link > 3)
                 return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (32768 * depth)};
 
-        thread threads[all_moves.moves_count];
-        int scores[all_moves.moves_count];
+        pthread_t threads[all_moves.moves_count];
+        worker_t args[all_moves.moves_count];
 
         field_t bestfield = all_moves.moves[0];
         alpha = minimax_scout(depth - 1, alpha, beta, false, all_moves.moves[0]);
 
-        for (int i = 1; i < all_moves.moves_count; ++i)
+        for (long i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, alpha, beta, &all_moves]()
-                                {
-                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
-                for (int i = 0; i < depth; ++i)
-                    newcache[i].reserve(1024);
-                scores[i] = minimax(depth - 1, alpha, alpha + 1, false, all_moves.moves[i], newcache);
-                if(scores[i] > alpha)
-                    scores[i] = minimax(depth - 1, scores[i], beta, false, all_moves.moves[i], newcache); });
+            args[i].alpha = alpha;
+            args[i].beta = beta;
+            args[i].depth = depth;
+            args[i].field = &all_moves.moves[i];
+
+            pthread_create(&threads[i], NULL, maximize_worker, (void *)&args[i]);
         }
+
         for (int i = 1; i < all_moves.moves_count; ++i)
-            threads[i].join();
+            pthread_join(threads[i], NULL);
+
         for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            if (scores[i] > alpha)
+            if (args[i].score > alpha)
             {
-                alpha = scores[i];
+                alpha = args[i].score;
                 bestfield = all_moves.moves[i];
             }
         }
@@ -2238,31 +2055,30 @@ minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const b
             if (all_moves.moves[i].sec_link > 3)
                 return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
 
-        thread threads[all_moves.moves_count];
-        int scores[all_moves.moves_count];
+        pthread_t threads[all_moves.moves_count];
+        worker_t args[all_moves.moves_count];
 
         field_t bestfield = all_moves.moves[0];
         beta = minimax_scout(depth - 1, alpha, beta, true, all_moves.moves[0]);
 
-        for (int i = 1; i < all_moves.moves_count; ++i)
+        for (long i = 1; i < all_moves.moves_count; ++i)
         {
-            threads[i] = thread([&scores, i, depth, &alpha, &beta, &all_moves]()
-                                {
-                ankerl::unordered_dense::map<field_t, ttentry_t, field_t> newcache[depth];
-                for (int i = 0; i < depth; ++i)
-                    newcache[i].reserve(1024);
-                scores[i] = minimax(depth - 1, beta - 1, beta, true, all_moves.moves[i], newcache);
-                if(scores[i] < beta)
-                    scores[i] = minimax(depth - 1, alpha, scores[i], true, all_moves.moves[i], newcache); });
+            args[i].alpha = alpha;
+            args[i].beta = beta;
+            args[i].depth = depth;
+            args[i].field = &all_moves.moves[i];
+
+            pthread_create(&threads[i], NULL, minimize_worker, (void *)&args[i]);
         }
+
         for (int i = 1; i < all_moves.moves_count; ++i)
-            threads[i].join();
+            pthread_join(threads[i], NULL);
 
         for (int i = 1; i < all_moves.moves_count; ++i)
         {
-            if (beta > scores[i])
+            if (beta > args[i].score)
             {
-                beta = scores[i];
+                beta = args[i].score;
                 bestfield = all_moves.moves[i];
             }
         }
