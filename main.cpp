@@ -1,7 +1,6 @@
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <pthread.h>
 #include <time.h>
-#include <thread>
 #include "amalgamation.h"
 
 #if defined(__AVX512F__)
@@ -1041,7 +1040,7 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
                 field_t temp_field = position;
 
                 temp_field.is_firewall_available_sec = 0;
-                temp_field.firewall_sec = bit_pos;
+                temp_field.firewall_sec = (63 - bit_pos);
 
                 res.moves[res.moves_count++] = temp_field;
 
@@ -2435,7 +2434,7 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 field_t temp_field = position;
 
                 temp_field.is_firewall_available_sec = 0;
-                temp_field.firewall_sec = bit_pos;
+                temp_field.firewall_sec = (63 - bit_pos);
 
                 BRANCH_ENTER_MIN();
                 int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
@@ -4240,7 +4239,7 @@ void *ai_move_thread(void *args)
     debug_printf("adaptive_ai_level = %d\n", adaptive_ai_level);
     minimax_main_result_t move = minimax_single_main(adaptive_ai_level, MIN, MAX, true, pos);
 
-    if (max_time < 1000000000ll)
+    if (max_time < 600000000ll && adaptive_ai_level < 20)
     {
         adaptive_ai_level += 2;
     }
