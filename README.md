@@ -3,6 +3,17 @@
 
 This project is my attempt to build a strong AI player for **Rai-Net Access Battlers** using the minimax algorithm to pick the best possible move in any given position.
 
+## Project Dependencies
+
+This project is written in **C++** and relies on the following external libraries:
+
+- **GLFW 3** (`libglfw3`)  
+  Used for creating the window, handling input, and rendering the simple graphical interface / board visualization.
+
+- **Boost.Unordered**  
+  Specifically: `#include <boost/unordered/unordered_flat_map.hpp>`  
+  Provides a high-performance, flat hash map implementation used for transposition tables / caching in the search algorithm.
+
 ## Current Limitations
 
 This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. Here's what it's currently not great at:
