@@ -1,58 +1,113 @@
 **Rainet Access Battlers AI**
 =============================
 
-This AI project utilizes the minimax algorithm to calculate the best move for a given Rainet Access Battlers position.
+This project is my attempt to build a strong AI player for **Rai-Net Access Battlers** using the minimax algorithm to pick the best possible move in any given position.
 
-**Limitations and Future Improvements**
-------------------------------------
+## Current Limitations
 
-While this AI is capable of analyzing positions, there are some limitations to be aware of:
+This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. Here's what it's currently not great at:
 
-* **Firewall and 404 Not Found Powerup Calculations**: Due to exponentially large computational requirements, the AI cannot calculate these powerups for both players beyond the main branch.
-* **Revealed/Covered Cards**: The AI does not take into account revealed or covered cards in its calculations.
-* **Board Position Analysis**: To accurately analyze a real board position, the AI would need to consider up to 70 possible card combinations, which is computationally expensive. As a result, the analysis may be slow.
-* **Game Complexity**: The game's complexity increases exponentially with exploration depth, making it challenging to optimize the AI's performance.
+- **Firewall** and **404-Not-Found (swap)** power-ups  
+  Because of the explosion in branching factor, the AI only looks ahead a limited number of moves (`COSTLY_POWERUPS_LOOKAHEAD`) when both players have these. Also, firewall is only ever applied to cover **Link cards** right now.
+
+- **Revealed / covered card knowledge**  
+  The engine doesn't yet factor in which cards have been revealed or are known to be covered.
+
+- **Full board position setup**  
+  A real game position can have up to ~70 possible card combinations per side. Enumerating everything is brutally slow, so analysis times can get long.
+
+- **Exponential complexity**  
+  Like most perfect-information games, deeper search = dramatically more computation.
 
 **Targeted Analyzing Depth**
 ---------------------------
 
-The AI can analyze positions with a depth set between 4 and 20. However, please note that caching can make the analysis memory-hungry. A recommended analyzing depth is between 10 and 14.
+You can set the search depth anywhere from **6** to **16** plies.  
+Deeper = stronger play, but also much more memory usage (thanks to caching/transposition tables).
+
+**Sweet spot for most machines:** **10–14**  
+Anything beyond 14 usually requires serious RAM and patience.
 
 **Position Representation**
 -------------------------
 
-The position representation can be found in the `field` struct. The following variables are used as bitboards to represent link/virus cards for both players:
+Everything lives inside a compact `field_t` struct:
 
-* `firl`, `secl`, `firv`, `secv`
+```
+struct field_t
+{
+    uint64_t is_fir_mask; // first player cards mask
+    uint64_t is_sec_mask; // second player cards mask
+    uint64_t is_link_mask; // link cards mask
+    uint64_t is_boosted_mask; // boosted cards mask
 
-Additionally, `fir` and `sec` arrays are used to represent every card, with link cards stored as the first 4 elements followed by virus cards. Boosted cards should always be stored as the first card in their respective sections (index 0 for boosted link, index 4 for boosted virus).
+    uint8_t fir_link : 4; // captured links by the first player
+    uint8_t sec_link : 4; // captured viruses by the first player
+    uint8_t fir_virus : 4; // captured links by the second player
+    uint8_t sec_virus : 4; // captured viruses by the second player
 
-If you have suggestions for better board representations, please feel free to share them.
+    uint8_t is_boost_available_fir : 1;
+    uint8_t is_boost_available_sec : 1;
+    uint8_t is_checker_available_fir : 1;
+    uint8_t is_checker_available_sec : 1;
+    uint8_t is_swap_available_fir : 1;
+    uint8_t is_swap_available_sec : 1;
+    uint8_t is_firewall_available_fir : 1;
+    uint8_t is_firewall_available_sec : 1;
+
+    uint8_t forward_adv_fir; // card advancement for the first player
+    uint8_t forward_adv_sec; // card advancement for the second player
+
+    // location for the firewalls (mask is computed as 1ULL << firewall_var)
+    uint8_t firewall_fir; 
+    uint8_t firewall_sec;
+}
+```
+
+The struct is currently ~40 bytes. With some clever packing (e.g. representing boosted cards with uint8_t's like firewalls), it could shrink to ~32–33 bytes, but it would require more manual bit-twiddling.
+We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations quickly.
 
 **Position Evaluation**
 ---------------------
 
-A good evaluation function is crucial for the AI's performance. It determines how the AI plays and which moves are selected over others. The current formula returns the y-coordinate of every card, prioritizing forward moves. The formula is:
+This is the heart of the AI, it decides what "good" looks like. Current version:
 
-`y coordinate + 1024 * links + 1024 * opponent viruses - 2048 * viruses - 2048 * opponent links`
+1024 * 2<sup>captured_links_player_one</sup> - 2048 * 2<sup>captured_viruses_player_one</sup> - 1024 * 2<sup>captured_links_player_two</sup> + 2048 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 2048 * is_swap_available_player_one - 2048 * is_swap_available_player_two
+
+**Player One** (fir) maximizes the score  
+**Player Two** (sec) minimizes it
+
+### Key Points
+- Capturing **Link** cards is rewarded exponentially.
+- Capturing **Virus** cards is punished exponentially.
+- The **swap** power-up gets a huge bonus because it's often decisive in the late game, the AI avoids wasting it on small edges.
+- Advancement (how far your pieces have moved forward) encourages aggressive play.
 
 This evaluation function can be improved upon, and suggestions are welcome.
 
-**Position Analysis**
+**Search Implementations**
 ---------------------
-The position analysis is a multi-pass process that ensures optimal performance:
+In main.cpp you'll find two minimax variants:
 
-1. **Initial Pass**: All possible moves are analyzed in parallel with reduced depth to select the best move for further analysis.
-2. **Recursive Analysis**: The selected best move is recursively analyzed, starting with all moves at a reduced depth and then applying the minimax scout algorithm to explore positions with full depth in parallel. This approach eliminates unoptimized alpha/beta calculations and accelerates the analysis process.
-3. **Final Pass**: The main minimax function analyzes all remaining positions using the minimax scout algorithm in parallel, ensuring optimal performance. Additionally, it detects and handles stalling threads, recalculating them as needed.
+- **minimax_single_main** — classic single-threaded version (what the AI actually uses right now)
+- **minimax_main** — multi-threaded attempt to explore moves faster
+
+Surprisingly, the parallel version often uses way more memory and isn't consistently faster, so single-threaded usually wins for now.
 
 **Future Development**
 ---------------------
-* The performance could be improved, like the memory usage and caching algorithm.
-* Better analysis for a given position with all cards covered
 
-While there are limitations and areas for improvement, this project aims to provide optimal performance despite the complexity of the game. 
+* Better move ordering & pruning to reach deeper searches
+* Smarter caching / lower memory usage
+* Proper handling of revealed cards and partial knowledge
+* A much nicer frontend / GUI (the current one is very bare-bones)
+* Implementing more advanced minimax tricks (aspiration windows, iterative deepening refinements, etc.)
 
 **Contribution**
 ---------------------
-I welcome contributions and suggestions to further enhance the AI's capabilities.
+I welcome contributions and suggestions to further enhance the AI's capabilities. <br><br>
+**Especially interested in**:
+* Anyone who wants to make a prettier game interface
+* Better ways to explore / order moves
+* Evaluation improvements
+* Performance wins
