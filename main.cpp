@@ -1170,37 +1170,37 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
             {                                                                                                                                                          \
                 if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
                 {                                                                                                                                                      \
-                    field_t temp = position;                                                                                                                           \
+                    field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
-                    temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
-                    temp.forward_adv_fir += forward_adv;                                                                                                               \
+                    temp_field.is_boost_available_sec |= (((temp_field.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                     \
+                    temp_field.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                \
+                    temp_field.forward_adv_fir += forward_adv;                                                                                                         \
                     if (is_boosted)                                                                                                                                    \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask ^= (cur_pos_bitboard);                                                                                                    \
-                        temp.is_boosted_mask |= (new_pos_bitboard);                                                                                                    \
+                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
                     }                                                                                                                                                  \
                     else                                                                                                                                               \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask &= ~(new_pos_bitboard);                                                                                                   \
+                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
                     }                                                                                                                                                  \
-                    temp.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                         \
-                    temp.is_link_mask &= ~new_pos_bitboard;                                                                                                            \
+                    temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                    temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
                     if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
                     {                                                                                                                                                  \
-                        uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                          \
-                        temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                   \
+                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
                     }                                                                                                                                                  \
                     else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
                     {                                                                                                                                                  \
-                        temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                    \
+                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
                     }                                                                                                                                                  \
-                    temp.is_sec_mask ^= new_pos_bitboard;                                                                                                              \
-                    ++temp.fir_link;                                                                                                                                   \
+                    temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
+                    ++temp_field.fir_link;                                                                                                                             \
                                                                                                                                                                        \
-                    BRANCH_ENTER_MAX();                                                                                                                                \
-                    int reschild = minimax(depth, alpha, beta, false, temp, cache);                                                                                    \
+                    BRANCH_ENTER_MAX("capture link");                                                                                                                  \
+                    int reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();                                        \
                     BRANCH_EXIT_MAX();                                                                                                                                 \
                     alpha = (reschild > alpha) ? reschild : alpha;                                                                                                     \
                     if (beta <= alpha)                                                                                                                                 \
@@ -1212,37 +1212,55 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
                 }                                                                                                                                                      \
                 else if (position.fir_virus < 3)                                                                                                                       \
                 {                                                                                                                                                      \
-                    field_t temp = position;                                                                                                                           \
+                    field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
-                    temp.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                      \
-                    temp.forward_adv_fir += forward_adv;                                                                                                               \
+                    temp_field.is_boost_available_sec |= (((temp_field.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                     \
+                    temp_field.forward_adv_sec -= (new_pos_coord >> 3);                                                                                                \
+                    temp_field.forward_adv_fir += forward_adv;                                                                                                         \
                     if (is_boosted)                                                                                                                                    \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask ^= (cur_pos_bitboard);                                                                                                    \
-                        temp.is_boosted_mask |= (new_pos_bitboard);                                                                                                    \
+                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
                     }                                                                                                                                                  \
                     else                                                                                                                                               \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask &= ~(new_pos_bitboard);                                                                                                   \
+                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
                     }                                                                                                                                                  \
-                    temp.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                         \
+                    temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
                     if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
                     {                                                                                                                                                  \
-                        uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                          \
-                        temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                   \
+                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
                     }                                                                                                                                                  \
                     else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
                     {                                                                                                                                                  \
-                        temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                    \
+                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
                     }                                                                                                                                                  \
-                    temp.is_sec_mask ^= new_pos_bitboard;                                                                                                              \
-                    ++temp.fir_virus;                                                                                                                                  \
+                    temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
+                    ++temp_field.fir_virus;                                                                                                                            \
                                                                                                                                                                        \
-                    BRANCH_ENTER_MAX();                                                                                                                                \
-                    int reschild = minimax(depth, alpha, beta, false, temp, cache);                                                                                    \
-                    BRANCH_EXIT_MAX();                                                                                                                                 \
+                    int reschild;                                                                                                                                      \
+                    if (is_boosted)                                                                                                                                    \
+                    {                                                                                                                                                  \
+                        BRANCH_ENTER_MAX("capture virus boosted");                                                                                                     \
+                        reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();                                        \
+                        BRANCH_EXIT_MAX();                                                                                                                             \
+                    }                                                                                                                                                  \
+                    else                                                                                                                                               \
+                    {                                                                                                                                                  \
+                        BRANCH_ENTER_MAX("capture virus not boosted");                                                                                                 \
+                        if (depth > 0)                                                                                                                                 \
+                        {                                                                                                                                              \
+                            reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);                                                                     \
+                            if (reschild > alpha)                                                                                                                      \
+                                reschild = minimax(depth, alpha, beta, false, temp_field, cache);                                                                      \
+                        }                                                                                                                                              \
+                        else                                                                                                                                           \
+                            reschild = temp_field.evaluate();                                                                                                          \
+                                                                                                                                                                       \
+                        BRANCH_EXIT_MAX();                                                                                                                             \
+                    }                                                                                                                                                  \
                     alpha = (reschild > alpha) ? reschild : alpha;                                                                                                     \
                     if (beta <= alpha)                                                                                                                                 \
                     {                                                                                                                                                  \
@@ -1254,25 +1272,43 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
             }                                                                                                                                                          \
             else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
             {                                                                                                                                                          \
-                field_t temp = position;                                                                                                                               \
+                field_t temp_field = position;                                                                                                                         \
                                                                                                                                                                        \
-                temp.forward_adv_fir += forward_adv;                                                                                                                   \
+                temp_field.forward_adv_fir += forward_adv;                                                                                                             \
                 if (is_boosted)                                                                                                                                        \
-                    temp.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                     \
-                temp.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                             \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
+                temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
                 if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                                \
                 {                                                                                                                                                      \
-                    uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                              \
-                    temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                       \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
                 }                                                                                                                                                      \
                 else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                              \
                 {                                                                                                                                                      \
-                    temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                        \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
                 }                                                                                                                                                      \
                                                                                                                                                                        \
-                BRANCH_ENTER_MAX();                                                                                                                                    \
-                int reschild = minimax(depth, alpha, beta, false, temp, cache);                                                                                        \
-                BRANCH_EXIT_MAX();                                                                                                                                     \
+                int reschild;                                                                                                                                          \
+                if (is_boosted)                                                                                                                                        \
+                {                                                                                                                                                      \
+                    BRANCH_ENTER_MAX("move boosted");                                                                                                                  \
+                    reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();                                            \
+                    BRANCH_EXIT_MAX();                                                                                                                                 \
+                }                                                                                                                                                      \
+                else                                                                                                                                                   \
+                {                                                                                                                                                      \
+                    BRANCH_ENTER_MAX("move not boosted");                                                                                                              \
+                    if (depth > 0)                                                                                                                                     \
+                    {                                                                                                                                                  \
+                        reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);                                                                         \
+                        if (reschild > alpha)                                                                                                                          \
+                            reschild = minimax(depth, alpha, beta, false, temp_field, cache);                                                                          \
+                    }                                                                                                                                                  \
+                    else                                                                                                                                               \
+                        reschild = temp_field.evaluate();                                                                                                              \
+                                                                                                                                                                       \
+                    BRANCH_EXIT_MAX();                                                                                                                                 \
+                }                                                                                                                                                      \
                 alpha = (reschild > alpha) ? reschild : alpha;                                                                                                         \
                 if (beta <= alpha)                                                                                                                                     \
                 {                                                                                                                                                      \
@@ -1288,37 +1324,37 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
             {                                                                                                                                                          \
                 if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
                 {                                                                                                                                                      \
-                    field_t temp = position;                                                                                                                           \
+                    field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
-                    temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
-                    temp.forward_adv_sec += forward_adv;                                                                                                               \
+                    temp_field.is_boost_available_fir |= (((temp_field.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                     \
+                    temp_field.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                            \
+                    temp_field.forward_adv_sec += forward_adv;                                                                                                         \
                     if (is_boosted)                                                                                                                                    \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask ^= (cur_pos_bitboard);                                                                                                    \
-                        temp.is_boosted_mask |= (new_pos_bitboard);                                                                                                    \
+                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
                     }                                                                                                                                                  \
                     else                                                                                                                                               \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask &= ~(new_pos_bitboard);                                                                                                   \
+                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
                     }                                                                                                                                                  \
-                    temp.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                         \
-                    temp.is_link_mask &= ~new_pos_bitboard;                                                                                                            \
+                    temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                    temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
                     if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
                     {                                                                                                                                                  \
-                        uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                          \
-                        temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                   \
+                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
                     }                                                                                                                                                  \
                     else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
                     {                                                                                                                                                  \
-                        temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                    \
+                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
                     }                                                                                                                                                  \
-                    temp.is_fir_mask ^= new_pos_bitboard;                                                                                                              \
-                    ++temp.sec_link;                                                                                                                                   \
+                    temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
+                    ++temp_field.sec_link;                                                                                                                             \
                                                                                                                                                                        \
-                    BRANCH_ENTER_MIN();                                                                                                                                \
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);                                                                                     \
+                    BRANCH_ENTER_MIN("capture link");                                                                                                                  \
+                    int reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();                                         \
                     BRANCH_EXIT_MIN();                                                                                                                                 \
                     beta = (reschild < beta) ? reschild : beta;                                                                                                        \
                     if (beta <= alpha)                                                                                                                                 \
@@ -1330,37 +1366,55 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
                 }                                                                                                                                                      \
                 else if (position.sec_virus < 3)                                                                                                                       \
                 {                                                                                                                                                      \
-                    field_t temp = position;                                                                                                                           \
+                    field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
-                    temp.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                                  \
-                    temp.forward_adv_sec += forward_adv;                                                                                                               \
+                    temp_field.is_boost_available_fir |= (((temp_field.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                     \
+                    temp_field.forward_adv_fir -= 7 - (new_pos_coord >> 3);                                                                                            \
+                    temp_field.forward_adv_sec += forward_adv;                                                                                                         \
                     if (is_boosted)                                                                                                                                    \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask ^= (cur_pos_bitboard);                                                                                                    \
-                        temp.is_boosted_mask |= (new_pos_bitboard);                                                                                                    \
+                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
                     }                                                                                                                                                  \
                     else                                                                                                                                               \
                     {                                                                                                                                                  \
-                        temp.is_boosted_mask &= ~(new_pos_bitboard);                                                                                                   \
+                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
                     }                                                                                                                                                  \
-                    temp.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                         \
+                    temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
                     if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
                     {                                                                                                                                                  \
-                        uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                          \
-                        temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                   \
+                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
                     }                                                                                                                                                  \
                     else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
                     {                                                                                                                                                  \
-                        temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                    \
+                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
                     }                                                                                                                                                  \
-                    temp.is_fir_mask ^= new_pos_bitboard;                                                                                                              \
-                    ++temp.sec_virus;                                                                                                                                  \
+                    temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
+                    ++temp_field.sec_virus;                                                                                                                            \
                                                                                                                                                                        \
-                    BRANCH_ENTER_MIN();                                                                                                                                \
-                    int reschild = minimax(depth, alpha, beta, true, temp, cache);                                                                                     \
-                    BRANCH_EXIT_MIN();                                                                                                                                 \
+                    int reschild;                                                                                                                                      \
+                    if (is_boosted)                                                                                                                                    \
+                    {                                                                                                                                                  \
+                        BRANCH_ENTER_MIN("capture virus boosted");                                                                                                     \
+                        reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();                                         \
+                        BRANCH_EXIT_MIN();                                                                                                                             \
+                    }                                                                                                                                                  \
+                    else                                                                                                                                               \
+                    {                                                                                                                                                  \
+                        BRANCH_ENTER_MIN("capture virus not boosted");                                                                                                 \
+                        if (depth > 0)                                                                                                                                 \
+                        {                                                                                                                                              \
+                            reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);                                                                        \
+                            if (reschild < beta)                                                                                                                       \
+                                reschild = minimax(depth, alpha, beta, true, temp_field, cache);                                                                       \
+                        }                                                                                                                                              \
+                        else                                                                                                                                           \
+                            reschild = temp_field.evaluate();                                                                                                          \
+                                                                                                                                                                       \
+                        BRANCH_EXIT_MIN();                                                                                                                             \
+                    }                                                                                                                                                  \
                     beta = (reschild < beta) ? reschild : beta;                                                                                                        \
                     if (beta <= alpha)                                                                                                                                 \
                     {                                                                                                                                                  \
@@ -1372,25 +1426,43 @@ possible_moves_t possiblemoves(const field_t &position, const bool player)
             }                                                                                                                                                          \
             else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
             {                                                                                                                                                          \
-                field_t temp = position;                                                                                                                               \
+                field_t temp_field = position;                                                                                                                         \
                                                                                                                                                                        \
-                temp.forward_adv_sec += forward_adv;                                                                                                                   \
+                temp_field.forward_adv_sec += forward_adv;                                                                                                             \
                 if (is_boosted)                                                                                                                                        \
-                    temp.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                     \
-                temp.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                             \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
+                temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
                 if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                               \
                 {                                                                                                                                                      \
-                    uint64_t mask = temp.is_link_mask & cur_pos_bitboard;                                                                                              \
-                    temp.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                       \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
                 }                                                                                                                                                      \
                 else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                             \
                 {                                                                                                                                                      \
-                    temp.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                        \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
                 }                                                                                                                                                      \
                                                                                                                                                                        \
-                BRANCH_ENTER_MIN();                                                                                                                                    \
-                int reschild = minimax(depth, alpha, beta, true, temp, cache);                                                                                         \
-                BRANCH_EXIT_MIN();                                                                                                                                     \
+                int reschild;                                                                                                                                          \
+                if (is_boosted)                                                                                                                                        \
+                {                                                                                                                                                      \
+                    BRANCH_ENTER_MIN("move boosted");                                                                                                                  \
+                    reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();                                             \
+                    BRANCH_EXIT_MIN();                                                                                                                                 \
+                }                                                                                                                                                      \
+                else                                                                                                                                                   \
+                {                                                                                                                                                      \
+                    BRANCH_ENTER_MIN("move not boosted");                                                                                                              \
+                    if (depth > 0)                                                                                                                                     \
+                    {                                                                                                                                                  \
+                        reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);                                                                            \
+                        if (reschild < beta)                                                                                                                           \
+                            reschild = minimax(depth, alpha, beta, true, temp_field, cache);                                                                           \
+                    }                                                                                                                                                  \
+                    else                                                                                                                                               \
+                        reschild = temp_field.evaluate();                                                                                                              \
+                                                                                                                                                                       \
+                    BRANCH_EXIT_MIN();                                                                                                                                 \
+                }                                                                                                                                                      \
                 beta = (reschild < beta) ? reschild : beta;                                                                                                            \
                 if (beta <= alpha)                                                                                                                                     \
                 {                                                                                                                                                      \
@@ -1407,6 +1479,8 @@ typedef struct
     int64_t total_entries;
     int64_t cutoff_entries;
     int64_t improved_score;
+    int64_t recursion_cost;
+    const char *msg;
     int temp_score;
     int pad;
 } cutoff_tracker_t;
@@ -1418,28 +1492,34 @@ static cutoff_tracker_t cutoff_tracker[1000] = {0};
 #define BEGIN_BRANCH_TRACKING() \
     static constexpr int _branch_counter_base = __COUNTER__
 
-#define BRANCH_ENTER_MAX()                                                                \
+#define BRANCH_ENTER_MAX(MSG)                                                             \
     static constexpr int _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
+    const int64_t cur_rec_count_##__LINE__ = rec_counter;                                 \
     cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                               \
+    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                     \
     cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                              \
     cutoff_tracker[_branch_idx_##__LINE__].temp_score = alpha
 
-#define BRANCH_ENTER_MIN()                                                                \
+#define BRANCH_ENTER_MIN(MSG)                                                             \
     static constexpr int _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
+    const int64_t cur_rec_count_##__LINE__ = rec_counter;                                 \
     cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                               \
+    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                     \
     cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                              \
     cutoff_tracker[_branch_idx_##__LINE__].temp_score = beta
 
-#define BRANCH_EXIT_MAX()                                             \
-    if (beta > reschild)                                              \
-        cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries--;      \
-    if (reschild > cutoff_tracker[_branch_idx_##__LINE__].temp_score) \
+#define BRANCH_EXIT_MAX()                                                                            \
+    cutoff_tracker[_branch_idx_##__LINE__].recursion_cost += rec_counter - cur_rec_count_##__LINE__; \
+    if (beta > reschild)                                                                             \
+        cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries--;                                     \
+    if (reschild > cutoff_tracker[_branch_idx_##__LINE__].temp_score)                                \
     cutoff_tracker[_branch_idx_##__LINE__].improved_score++
 
-#define BRANCH_EXIT_MIN()                                             \
-    if (reschild > alpha)                                             \
-        cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries--;      \
-    if (reschild < cutoff_tracker[_branch_idx_##__LINE__].temp_score) \
+#define BRANCH_EXIT_MIN()                                                                            \
+    cutoff_tracker[_branch_idx_##__LINE__].recursion_cost += rec_counter - cur_rec_count_##__LINE__; \
+    if (reschild > alpha)                                                                            \
+        cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries--;                                     \
+    if (reschild < cutoff_tracker[_branch_idx_##__LINE__].temp_score)                                \
     cutoff_tracker[_branch_idx_##__LINE__].improved_score++
 
 #define GET_BRANCH_COUNT() \
@@ -1448,8 +1528,8 @@ static cutoff_tracker_t cutoff_tracker[1000] = {0};
 #else
 
 #define BEGIN_BRANCH_TRACKING()
-#define BRANCH_ENTER_MAX()
-#define BRANCH_ENTER_MIN()
+#define BRANCH_ENTER_MAX(MSG)
+#define BRANCH_ENTER_MIN(MSG)
 #define BRANCH_EXIT_MAX()
 #define BRANCH_EXIT_MIN()
 #define GET_BRANCH_COUNT() 0
@@ -1527,18 +1607,23 @@ static cache_tracker_t cache_entry_tracker[1000] = {0};
 BEGIN_BRANCH_TRACKING();
 BEGIN_CACHE_TRACKING();
 
+int64_t rec_counter = 0;
+
 int minimax(int depth, int alpha, int beta, const bool player, const field_t &position, boost::unordered_flat_map<field_t, ttentry_t, field_t> *cache)
 {
+    #ifdef BRANCH_DEBUG
+    ++rec_counter;
+    #endif
+    
+    --depth;
+
+    const uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
+    const uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
+    const uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
+    const uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
+
     if (player)
     {
-        if (depth == 0)
-            return position.evaluate();
-        --depth;
-
-        const uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
-        const uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
-        const uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
-        const uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
         const uint64_t enemy_firewall_mask = ((position.is_firewall_available_sec) ? 0 : (1ULL << position.firewall_sec));
         const uint64_t unmoveable_mask = position.is_fir_mask | position.is_sec_mask | enemy_firewall_mask;
 
@@ -1611,17 +1696,19 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         {
             if (fir_link_mask & 8ULL)
             {
-                field_t temp = position;
+                field_t temp_field = position;
 
-                temp.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
-                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1);
-                temp.is_boosted_mask &= ~8ULL;
-                temp.is_fir_mask &= ~8ULL;
-                temp.is_link_mask &= ~8ULL;
-                ++temp.fir_link;
-                BRANCH_ENTER_MAX();
-                int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                temp_field.forward_adv_fir -= 7 - (__builtin_ctzll(8ULL) >> 3);
+                temp_field.is_boost_available_fir |= ((temp_field.is_boosted_mask >> __builtin_ctzll(8ULL)) & 1);
+                temp_field.is_boosted_mask &= ~8ULL;
+                temp_field.is_fir_mask &= ~8ULL;
+                temp_field.is_link_mask &= ~8ULL;
+                ++temp_field.fir_link;
+
+                BRANCH_ENTER_MAX("deposit close");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MAX();
+
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
@@ -1632,18 +1719,19 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
             }
             if (fir_link_mask & 16ULL)
             {
-                field_t temp = position;
+                field_t temp_field = position;
 
-                temp.forward_adv_fir -= 7 - (__builtin_ctzll(16ULL) >> 3);
-                temp.is_boost_available_fir |= ((temp.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1);
-                temp.is_boosted_mask &= ~16ULL;
-                temp.is_fir_mask &= ~16ULL;
-                temp.is_link_mask &= ~16ULL;
-                ++temp.fir_link;
+                temp_field.forward_adv_fir -= 7 - (__builtin_ctzll(16ULL) >> 3);
+                temp_field.is_boost_available_fir |= ((temp_field.is_boosted_mask >> __builtin_ctzll(16ULL)) & 1);
+                temp_field.is_boosted_mask &= ~16ULL;
+                temp_field.is_fir_mask &= ~16ULL;
+                temp_field.is_link_mask &= ~16ULL;
+                ++temp_field.fir_link;
 
-                BRANCH_ENTER_MAX();
-                int reschild = minimax(depth, alpha, beta, false, temp, cache);
+                BRANCH_ENTER_MAX("deposit close");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MAX();
+
                 alpha = (reschild > alpha) ? reschild : alpha;
                 if (beta <= alpha)
                 {
@@ -1655,20 +1743,21 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         }
         else if (__builtin_expect((((fir_link_mask & 2052ULL) & position.is_boosted_mask) != 0 && (unmoveable_mask & 8ULL) == 0) || (((fir_link_mask & 4128ULL) & position.is_boosted_mask) != 0 && (unmoveable_mask & 16ULL) == 0), 0))
         {
-            field_t temp = position;
+            field_t temp_field = position;
 
             uint64_t boosted_card = position.is_fir_mask & position.is_boosted_mask;
 
-            temp.forward_adv_fir -= 7 - (__builtin_ctzll(boosted_card) >> 3);
-            temp.is_boost_available_fir = 1;
-            temp.is_boosted_mask &= ~boosted_card;
-            temp.is_fir_mask &= ~boosted_card;
-            temp.is_link_mask &= ~boosted_card;
-            ++temp.fir_link;
+            temp_field.forward_adv_fir -= 7 - (__builtin_ctzll(boosted_card) >> 3);
+            temp_field.is_boost_available_fir = 1;
+            temp_field.is_boosted_mask &= ~boosted_card;
+            temp_field.is_fir_mask &= ~boosted_card;
+            temp_field.is_link_mask &= ~boosted_card;
+            ++temp_field.fir_link;
 
-            BRANCH_ENTER_MAX();
-            int reschild = minimax(depth, alpha, beta, false, temp, cache);
+            BRANCH_ENTER_MAX("deposit far");
+            int reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();
             BRANCH_EXIT_MAX();
+
             alpha = (reschild > alpha) ? reschild : alpha;
             if (beta <= alpha)
             {
@@ -1708,8 +1797,8 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_boosted_mask |= pos;
                 temp_field.is_boost_available_fir = 0;
 
-                BRANCH_ENTER_MAX();
-                int reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                BRANCH_ENTER_MAX("boost virus");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, false, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MAX();
 
                 alpha = (reschild > alpha) ? reschild : alpha;
@@ -1945,8 +2034,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_firewall_available_fir = 0;
                 temp_field.firewall_fir = bit_pos;
 
-                BRANCH_ENTER_MAX();
-                int reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                BRANCH_ENTER_MAX("firewall link");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                    if (reschild > alpha)
+                        reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
                 BRANCH_EXIT_MAX();
 
                 alpha = (reschild > alpha) ? reschild : alpha;
@@ -1966,8 +2063,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
 
             temp_field.is_firewall_available_fir = 1;
 
-            BRANCH_ENTER_MAX();
-            int reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+            BRANCH_ENTER_MAX("un-firewall");
+            int reschild;
+            if (depth > 0)
+            {
+                reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                if (reschild > alpha)
+                    reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+            }
+            else
+                reschild = temp_field.evaluate();
             BRANCH_EXIT_MAX();
 
             alpha = (reschild > alpha) ? reschild : alpha;
@@ -1998,8 +2103,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                     temp_field.is_swap_available_fir = 0;
                     temp_field.is_link_mask ^= (link_pos | virus_pos);
 
-                    BRANCH_ENTER_MAX();
-                    int reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                    BRANCH_ENTER_MAX("swap");
+                    int reschild;
+                    if (depth > 0)
+                    {
+                        reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                        if (reschild > alpha)
+                            reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                    }
+                    else
+                        reschild = temp_field.evaluate();
                     BRANCH_EXIT_MAX();
 
                     alpha = (reschild > alpha) ? reschild : alpha;
@@ -2030,8 +2143,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_boosted_mask |= pos;
                 temp_field.is_boost_available_fir = 0;
 
-                BRANCH_ENTER_MAX();
-                int reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                BRANCH_ENTER_MAX("boost link");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                    if (reschild > alpha)
+                        reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
                 BRANCH_EXIT_MAX();
 
                 alpha = (reschild > alpha) ? reschild : alpha;
@@ -2047,14 +2168,23 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         }
         else
         {
-            field_t temp = position;
+            field_t temp_field = position;
 
-            temp.is_boost_available_fir = 1;
-            temp.is_boosted_mask &= temp.is_sec_mask;
+            temp_field.is_boost_available_fir = 1;
+            temp_field.is_boosted_mask &= temp_field.is_sec_mask;
 
-            BRANCH_ENTER_MAX();
-            int reschild = minimax(depth, alpha, beta, false, temp, cache);
+            BRANCH_ENTER_MAX("un-boost");
+            int reschild;
+            if (depth > 0)
+            {
+                reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                if (reschild > alpha)
+                    reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+            }
+            else
+                reschild = temp_field.evaluate();
             BRANCH_EXIT_MAX();
+
             alpha = (reschild > alpha) ? reschild : alpha;
             if (beta <= alpha)
             {
@@ -2069,14 +2199,6 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
     }
     else
     {
-        if (depth == 0)
-            return position.evaluate();
-        --depth;
-
-        const uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
-        const uint64_t fir_virus_mask = position.is_fir_mask ^ fir_link_mask;
-        const uint64_t sec_link_mask = position.is_link_mask ^ fir_link_mask;
-        const uint64_t sec_virus_mask = position.is_sec_mask ^ sec_link_mask;
         const uint64_t enemy_firewall_mask = ((position.is_firewall_available_fir) ? 0 : (1ULL << position.firewall_fir));
         const uint64_t unmoveable_mask = position.is_fir_mask | position.is_sec_mask | enemy_firewall_mask;
 
@@ -2149,17 +2271,19 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         {
             if (sec_link_mask & 576460752303423488ULL)
             {
-                field_t temp = position;
+                field_t temp_field = position;
 
-                temp.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
-                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1);
-                temp.is_boosted_mask &= ~576460752303423488ULL;
-                temp.is_sec_mask &= ~576460752303423488ULL;
-                temp.is_link_mask &= ~576460752303423488ULL;
-                ++temp.sec_link;
-                BRANCH_ENTER_MIN();
-                int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                temp_field.forward_adv_sec -= (__builtin_ctzll(576460752303423488ULL) >> 3);
+                temp_field.is_boost_available_sec |= ((temp_field.is_boosted_mask >> __builtin_ctzll(576460752303423488ULL)) & 1);
+                temp_field.is_boosted_mask &= ~576460752303423488ULL;
+                temp_field.is_sec_mask &= ~576460752303423488ULL;
+                temp_field.is_link_mask &= ~576460752303423488ULL;
+                ++temp_field.sec_link;
+
+                BRANCH_ENTER_MIN("deposit close");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MIN();
+
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
@@ -2170,17 +2294,19 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
             }
             if (sec_link_mask & 1152921504606846976ULL)
             {
-                field_t temp = position;
+                field_t temp_field = position;
 
-                temp.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
-                temp.is_boost_available_sec |= ((temp.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1);
-                temp.is_boosted_mask &= ~1152921504606846976ULL;
-                temp.is_sec_mask &= ~1152921504606846976ULL;
-                temp.is_link_mask &= ~1152921504606846976ULL;
-                ++temp.sec_link;
-                BRANCH_ENTER_MIN();
-                int reschild = minimax(depth, alpha, beta, true, temp, cache);
+                temp_field.forward_adv_sec -= (__builtin_ctzll(1152921504606846976ULL) >> 3);
+                temp_field.is_boost_available_sec |= ((temp_field.is_boosted_mask >> __builtin_ctzll(1152921504606846976ULL)) & 1);
+                temp_field.is_boosted_mask &= ~1152921504606846976ULL;
+                temp_field.is_sec_mask &= ~1152921504606846976ULL;
+                temp_field.is_link_mask &= ~1152921504606846976ULL;
+                ++temp_field.sec_link;
+
+                BRANCH_ENTER_MIN("deposit close");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MIN();
+
                 beta = (reschild < beta) ? reschild : beta;
                 if (beta <= alpha)
                 {
@@ -2192,19 +2318,21 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         }
         else if (__builtin_expect((((sec_link_mask & 2310346608841064448ULL) & position.is_boosted_mask) != 0 && (unmoveable_mask & 1152921504606846976ULL) == 0) || (((sec_link_mask & 290482175965396992ULL) & position.is_boosted_mask) != 0 && (unmoveable_mask & 576460752303423488ULL) == 0), 0))
         {
-            field_t temp = position;
+            field_t temp_field = position;
 
             uint64_t boosted_card = position.is_sec_mask & position.is_boosted_mask;
 
-            temp.forward_adv_sec -= (__builtin_ctzll(boosted_card) >> 3);
-            temp.is_boost_available_sec = 1;
-            temp.is_boosted_mask &= ~boosted_card;
-            temp.is_sec_mask &= ~boosted_card;
-            temp.is_link_mask &= ~boosted_card;
-            ++temp.sec_link;
-            BRANCH_ENTER_MIN();
-            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+            temp_field.forward_adv_sec -= (__builtin_ctzll(boosted_card) >> 3);
+            temp_field.is_boost_available_sec = 1;
+            temp_field.is_boosted_mask &= ~boosted_card;
+            temp_field.is_sec_mask &= ~boosted_card;
+            temp_field.is_link_mask &= ~boosted_card;
+            ++temp_field.sec_link;
+
+            BRANCH_ENTER_MIN("deposit far");
+            int reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();
             BRANCH_EXIT_MIN();
+
             beta = (reschild < beta) ? reschild : beta;
             if (beta <= alpha)
             {
@@ -2244,8 +2372,8 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_boosted_mask |= pos;
                 temp_field.is_boost_available_sec = 0;
 
-                BRANCH_ENTER_MIN();
-                int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                BRANCH_ENTER_MIN("boost virus");
+                int reschild = (depth > 0) ? minimax(depth, alpha, beta, true, temp_field, cache) : temp_field.evaluate();
                 BRANCH_EXIT_MIN();
 
                 beta = (reschild < beta) ? reschild : beta;
@@ -2482,8 +2610,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_firewall_available_sec = 0;
                 temp_field.firewall_sec = (63 - bit_pos);
 
-                BRANCH_ENTER_MIN();
-                int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                BRANCH_ENTER_MIN("firewall link");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                    if (reschild < beta)
+                        reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
                 BRANCH_EXIT_MIN();
 
                 beta = (reschild < beta) ? reschild : beta;
@@ -2503,8 +2639,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
 
             temp_field.is_firewall_available_sec = 1;
 
-            BRANCH_ENTER_MIN();
-            int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+            BRANCH_ENTER_MIN("un-firewall");
+            int reschild;
+            if (depth > 0)
+            {
+                reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                if (reschild < beta)
+                    reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+            }
+            else
+                reschild = temp_field.evaluate();
             BRANCH_EXIT_MIN();
 
             beta = (reschild < beta) ? reschild : beta;
@@ -2535,8 +2679,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                     temp_field.is_swap_available_sec = 0;
                     temp_field.is_link_mask ^= (link_pos | virus_pos);
 
-                    BRANCH_ENTER_MIN();
-                    int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                    BRANCH_ENTER_MIN("swap");
+                    int reschild;
+                    if (depth > 0)
+                    {
+                        reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                        if (reschild < beta)
+                            reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                    }
+                    else
+                        reschild = temp_field.evaluate();
                     BRANCH_EXIT_MIN();
 
                     beta = (reschild < beta) ? reschild : beta;
@@ -2567,8 +2719,16 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 temp_field.is_boosted_mask |= pos;
                 temp_field.is_boost_available_sec = 0;
 
-                BRANCH_ENTER_MIN();
-                int reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                BRANCH_ENTER_MIN("boost link");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                    if (reschild < beta)
+                        reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
                 BRANCH_EXIT_MIN();
 
                 beta = (reschild < beta) ? reschild : beta;
@@ -2584,14 +2744,23 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
         }
         else
         {
-            field_t temp = position;
+            field_t temp_field = position;
 
-            temp.is_boost_available_sec = 1;
-            temp.is_boosted_mask &= temp.is_fir_mask;
+            temp_field.is_boost_available_sec = 1;
+            temp_field.is_boosted_mask &= temp_field.is_fir_mask;
 
-            BRANCH_ENTER_MIN();
-            int reschild = minimax(depth, alpha, beta, true, temp, cache);
+            BRANCH_ENTER_MIN("un-boost");
+            int reschild;
+            if (depth > 0)
+            {
+                reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                if (reschild < beta)
+                    reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+            }
+            else
+                reschild = temp_field.evaluate();
             BRANCH_EXIT_MIN();
+
             beta = (reschild < beta) ? reschild : beta;
             if (beta <= alpha)
             {
@@ -2884,15 +3053,13 @@ minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const b
 
 int64_t max_time = -1;
 
-#define ENGINE_DEBUG
-
 minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, const bool player, field_t &position)
 {
     max_time = -1;
     cur_search_depth = depth;
-#ifdef ENGINE_DEBUG
+
     struct timespec start, stop;
-#endif
+
     if (player)
     {
         possible_moves_t all_moves = possiblemoves(position, true);
@@ -2909,37 +3076,30 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
 
         for (int i = 0; i < all_moves.moves_count; ++i)
         {
-#ifdef ENGINE_DEBUG
+
             clock_gettime(CLOCK_MONOTONIC, &start);
-#endif
+
             int childres;
             if (is_first_move)
             {
                 childres = minimax(depth - 1, alpha, beta, false, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-                printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
-#endif
+                debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
             }
             else
             {
                 childres = minimax(depth - 1, alpha, alpha + 1, false, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-#endif
                 if (childres > alpha)
                 {
                     childres = minimax(depth - 1, alpha, beta, false, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
+
                     clock_gettime(CLOCK_MONOTONIC, &stop);
-                    printf("Maximize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
-#endif
+                    debug_printf("Maximize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
                 }
                 else
                 {
-#ifdef ENGINE_DEBUG
-                    printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
-#endif
+                    debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
                 }
             }
 
@@ -2969,42 +3129,29 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
 
         for (int i = 0; i < all_moves.moves_count; ++i)
         {
-#ifdef ENGINE_DEBUG
             clock_gettime(CLOCK_MONOTONIC, &start);
-#endif
             int childres;
 
             if (is_first_move)
             {
                 childres = minimax(depth - 1, alpha, beta, true, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-                printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
-#endif
+                debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
             }
             else
             {
                 childres = minimax(depth - 1, beta - 1, beta, true, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-#endif
                 if (childres < beta)
                 {
-#ifdef ENGINE_DEBUG
-                    printf("Minimize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
-                    clock_gettime(CLOCK_MONOTONIC, &start);
-#endif
                     childres = minimax(depth - 1, alpha, beta, true, all_moves.moves[i], newcache);
-#ifdef ENGINE_DEBUG
+
                     clock_gettime(CLOCK_MONOTONIC, &stop);
-                    printf("Minimize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
-#endif
+                    debug_printf("Minimize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
                 }
                 else
                 {
-#ifdef ENGINE_DEBUG
-                    printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
-#endif
+                    debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
                 }
             }
 
@@ -3058,7 +3205,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                                  });
             }
 
-            int iteration_alpha = prev_alpha - 1;
+            int iteration_alpha = prev_alpha - 56;
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
                 int move_idx = move_scores[i].first;
@@ -3076,9 +3223,10 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                 }
             }
 
-            if (iteration_alpha == prev_alpha - 1)
+            if (iteration_alpha == prev_alpha - 56)
             {
                 debug_printf("Guess failed\n");
+                
                 iteration_alpha = MIN;
                 for (int i = 0; i < all_moves.moves_count; ++i)
                 {
@@ -3116,7 +3264,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             int64_t cur_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000);
 
-            debug_printf("Depth %d completed in %ld ms, evaluation: %d\n",current_depth,cur_time,iteration_alpha);
+            debug_printf("Depth %d completed in %ld ms, evaluation: %d\n", current_depth, cur_time, iteration_alpha);
 
             if (current_depth == depth)
                 max_time = cur_time;
@@ -3140,7 +3288,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
         std::vector<std::pair<int, int>> move_scores(all_moves.moves_count);
         for (int i = 0; i < all_moves.moves_count; ++i)
-            move_scores[i] = {i, MAX}; 
+            move_scores[i] = {i, MAX};
 
         for (int current_depth = 2; current_depth <= depth; current_depth += 2)
         {
@@ -3161,7 +3309,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                                  });
             }
 
-            int iteration_beta = prev_beta + 1;
+            int iteration_beta = prev_beta + 56;
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
                 int move_idx = move_scores[i].first;
@@ -3179,7 +3327,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                 }
             }
 
-            if (iteration_beta == prev_beta + 1)
+            if (iteration_beta == prev_beta + 56)
             {
                 debug_printf("Guess failed\n");
 
@@ -4506,6 +4654,8 @@ void add_card_controls()
 
 void *ai_move_thread(void *args)
 {
+    debug_printf("pos: %lu %lu %lu %lu %lu\n", *((uint64_t *)(&pos) + 0), *((uint64_t *)(&pos) + 1), *((uint64_t *)(&pos) + 2), *((uint64_t *)(&pos) + 3), *((uint64_t *)(&pos) + 4));
+
     debug_printf("adaptive_ai_level = %d\n", adaptive_ai_level);
     minimax_main_result_t move = minimax_iteration_main(adaptive_ai_level, MIN, MAX, true, pos);
 
