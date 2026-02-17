@@ -1609,12 +1609,13 @@ BEGIN_CACHE_TRACKING();
 
 int64_t rec_counter = 0;
 
+
 int minimax(int depth, int alpha, int beta, const bool player, const field_t &position, boost::unordered_flat_map<field_t, ttentry_t, field_t> *cache)
 {
-    #ifdef BRANCH_DEBUG
+#ifdef BRANCH_DEBUG
     ++rec_counter;
-    #endif
-    
+#endif
+
     --depth;
 
     const uint64_t fir_link_mask = position.is_link_mask & position.is_fir_mask;
@@ -2055,6 +2056,39 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 }
 
                 temp ^= pos;
+            }
+
+            temp = (fir_virus_mask & 16717361816799281127ULL) & position.is_boosted_mask;
+
+            if (temp)
+            {
+                const int bit_pos = __builtin_ctzll(temp);
+                const uint64_t pos = (1ULL << bit_pos); // front -> back
+
+                field_t temp_field = position;
+
+                temp_field.is_firewall_available_fir = 0;
+                temp_field.firewall_fir = bit_pos;
+
+                BRANCH_ENTER_MAX("firewall boosted virus");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, alpha, alpha + 1, false, temp_field, cache);
+                    if (reschild > alpha)
+                        reschild = minimax(depth, alpha, beta, false, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
+                BRANCH_EXIT_MAX();
+
+                alpha = (reschild > alpha) ? reschild : alpha;
+                if (beta <= alpha)
+                {
+                    if (depth > MIN_CACHE_DEPTH)
+                        TRACK_ENTRY_MAX();
+                    return alpha;
+                }
             }
         }
         else if (position.is_firewall_available_fir == 0)
@@ -2631,6 +2665,39 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
                 }
 
                 temp ^= pos;
+            }
+
+            temp = (sec_virus_mask & 16717361816799281127ULL) & position.is_boosted_mask;
+
+            if (temp)
+            {
+                const int bit_pos = __builtin_clzll(temp);
+                const uint64_t pos = (1ULL << (63 - bit_pos)); // front -> back
+
+                field_t temp_field = position;
+
+                temp_field.is_firewall_available_sec = 0;
+                temp_field.firewall_sec = (63 - bit_pos);
+
+                BRANCH_ENTER_MIN("firewall virus");
+                int reschild;
+                if (depth > 0)
+                {
+                    reschild = minimax(depth, beta - 1, beta, true, temp_field, cache);
+                    if (reschild < beta)
+                        reschild = minimax(depth, alpha, beta, true, temp_field, cache);
+                }
+                else
+                    reschild = temp_field.evaluate();
+                BRANCH_EXIT_MIN();
+
+                beta = (reschild < beta) ? reschild : beta;
+                if (beta <= alpha)
+                {
+                    if (depth > MIN_CACHE_DEPTH)
+                        TRACK_ENTRY_MIN();
+                    return beta;
+                }
             }
         }
         else if (position.is_firewall_available_sec == 0)
