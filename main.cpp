@@ -3,10 +3,6 @@
 #include <time.h>
 #include "amalgamation.h"
 
-#if defined(__AVX512F__)
-#include <immintrin.h>
-#endif
-
 using namespace std;
 
 const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
@@ -33,6 +29,10 @@ const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
 #define debug_printf(...) printf(__VA_ARGS__)
 #else
 #define debug_printf(...) ((void)0)
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
 #endif
 
 int cur_search_depth = 0;
@@ -74,7 +74,53 @@ struct field_t
         return s.is_fir_mask | s.is_sec_mask;
     }
 
-    bool operator==(const field_t &) const = default;
+    inline __attribute__((always_inline)) bool operator!=(const field_t &other) const
+    {
+        return !(*this == other);
+    }
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
+    {
+        _mm512_mask_storeu_epi8(reinterpret_cast<void *>(this), 0xFFFFFFFFFFULL, _mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(&other)));
+        return *this;
+    }
+
+    inline __attribute__((always_inline)) bool operator==(const field_t &other) const
+    {
+        return _mm512_cmpeq_epi8_mask(_mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(this)), _mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(&other))) == 0xFFFFFFFFFFFFFFFFULL;
+    }
+
+#elif defined(__AVX2__)
+    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
+    {
+        _mm256_storeu_si256((__m256i *)(this), _mm256_loadu_si256((const __m256i *)(&other)));
+        *((uint64_t *)this + 4) = *((uint64_t *)&other + 4);
+        return *this;
+    }
+
+    inline __attribute__((always_inline)) bool operator==(const field_t &other) const
+    {
+        return _mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_loadu_si256((const __m256i *)(this)), _mm256_loadu_si256((const __m256i *)(&other)))) == 0xFFFFFFFF && *(uint64_t *)((uint8_t *)this + 32) == *(uint64_t *)((uint8_t *)&other + 32);
+    }
+
+#elif defined(__SSE2__)
+    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
+    {
+        _mm_storeu_si128((__m128i *)((uint8_t *)this + 0), _mm_loadu_si128((const __m128i *)((uint8_t *)&other + 0)));
+        _mm_storeu_si128((__m128i *)((uint8_t *)this + 16), _mm_loadu_si128((const __m128i *)((uint8_t *)&other + 16)));
+        *((uint64_t *)this + 4) = *((uint64_t *)&other + 4);
+        return *this;
+    }
+
+    inline __attribute__((always_inline)) bool operator==(const field_t &other) const
+    {
+        return _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i_u *)((uint8_t *)this + 0)), _mm_loadu_si128((const __m128i_u *)((uint8_t *)&other + 0)))) == 0xFFFF && _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i_u *)((uint8_t *)this + 16)), _mm_loadu_si128((const __m128i_u *)((uint8_t *)&other + 16)))) == 0xFFFF && *(uint64_t *)((uint8_t *)this + 32) == *(uint64_t *)((uint8_t *)&other + 32);
+    }
+
+#else
+    inline __attribute__((always_inline)) field_t &operator=(const field_t &) = default;
+    inline __attribute__((always_inline)) bool operator==(const field_t &) const = default;
+#endif
 
     void print_field()
     {
@@ -1457,13 +1503,13 @@ static cache_tracker_t cache_entry_tracker[1000] = {0};
 #else
 
 #define BEGIN_CACHE_TRACKING()
-#define TRACK_ENTRY_MAX()                    \
-    {                                        \
-        cache[depth][position] = {alpha, 0}; \
+#define TRACK_ENTRY_MAX()   \
+    {                       \
+        goto __cache_alpha; \
     }
-#define TRACK_ENTRY_MIN()                   \
-    {                                       \
-        cache[depth][position] = {beta, 0}; \
+#define TRACK_ENTRY_MIN()  \
+    {                      \
+        goto __cache_beta; \
     }
 #define TRACK_ENTRY_MAX_END()                                         \
     {                                                                 \
@@ -2558,6 +2604,14 @@ int minimax(int depth, int alpha, int beta, const bool player, const field_t &po
             TRACK_ENTRY_MIN_END();
         return beta;
     }
+
+__cache_beta:
+    cache[depth][position] = {beta, 0};
+    return beta;
+
+__cache_alpha:
+    cache[depth][position] = {alpha, 0};
+    return alpha;
 }
 
 int cutoffdepth;
@@ -2960,6 +3014,222 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
         }
 
         return (minimax_main_result_t){.best_field = best_field, .evaluation = beta};
+    }
+}
+
+minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int beta, const bool player, field_t &position)
+{
+    cur_search_depth = depth;
+    assert(depth >= 4 && depth % 2 == 0 && "Depth must be at least 4 and even (divisible by 2) for iterative deepening");
+
+    struct timespec start, stop;
+    minimax_main_result_t best_result;
+
+    if (player)
+    {
+        possible_moves_t all_moves = possiblemoves(position, true);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].fir_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (32768 * depth)};
+
+        field_t best_field = all_moves.moves[0];
+        int prev_alpha = alpha;
+
+        std::vector<std::pair<int, int>> move_scores(all_moves.moves_count);
+        for (int i = 0; i < all_moves.moves_count; ++i)
+            move_scores[i] = {i, MIN};
+
+        for (int current_depth = 2; current_depth <= depth; current_depth += 2)
+        {
+            clock_gettime(CLOCK_MONOTONIC, &start);
+
+            boost::unordered_flat_map<field_t, ttentry_t, field_t> newcache[current_depth];
+            for (int i = 0; i < current_depth; ++i)
+                newcache[i].reserve(1024);
+
+            if (current_depth > 2)
+            {
+                std::stable_sort(move_scores.begin(), move_scores.end(),
+                                 [](const auto &a, const auto &b)
+                                 {
+                                     if (a.second != b.second)
+                                         return a.second > b.second;
+                                     return a.first < b.first;
+                                 });
+            }
+
+            int iteration_alpha = prev_alpha - 1;
+            for (int i = 0; i < all_moves.moves_count; ++i)
+            {
+                int move_idx = move_scores[i].first;
+
+                int childres = minimax(current_depth - 1, iteration_alpha, iteration_alpha + 1, false, all_moves.moves[move_idx], newcache);
+                if (childres > iteration_alpha)
+                    childres = minimax(current_depth - 1, iteration_alpha, beta, false, all_moves.moves[move_idx], newcache);
+
+                move_scores[i].second = childres;
+
+                if (childres > iteration_alpha)
+                {
+                    best_field = all_moves.moves[move_idx];
+                    iteration_alpha = childres;
+                }
+            }
+
+            if (iteration_alpha == prev_alpha - 1)
+            {
+                debug_printf("Guess failed\n");
+                iteration_alpha = MIN;
+                for (int i = 0; i < all_moves.moves_count; ++i)
+                {
+                    int move_idx = move_scores[i].first;
+                    int childres;
+                    if (i == 0)
+                    {
+                        childres = minimax(current_depth - 1, iteration_alpha, beta, false, all_moves.moves[move_idx], newcache);
+                    }
+                    else
+                    {
+                        childres = minimax(current_depth - 1, iteration_alpha, iteration_alpha + 1, false, all_moves.moves[move_idx], newcache);
+                        if (childres > iteration_alpha)
+                            childres = minimax(current_depth - 1, iteration_alpha, beta, false, all_moves.moves[move_idx], newcache);
+                    }
+
+                    move_scores[i].second = childres;
+
+                    if (childres > iteration_alpha)
+                    {
+                        best_field = all_moves.moves[move_idx];
+                        iteration_alpha = childres;
+                    }
+                }
+            }
+
+            debug_printf("Search order: ");
+            for (int i = 0; i < all_moves.moves_count; ++i)
+            {
+                debug_printf("%d, ", move_scores[i].first);
+            }
+            debug_printf("\n");
+
+            clock_gettime(CLOCK_MONOTONIC, &stop);
+
+            int64_t cur_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000);
+
+            debug_printf("Depth %d completed in %ld ms, evaluation: %d\n",current_depth,cur_time,iteration_alpha);
+
+            if (current_depth == depth)
+                max_time = cur_time;
+
+            prev_alpha = iteration_alpha;
+
+            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_alpha};
+        }
+
+        return best_result;
+    }
+    else
+    {
+        possible_moves_t all_moves = possiblemoves(position, false);
+        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+            if (all_moves.moves[i].sec_link > 3)
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
+
+        field_t best_field = all_moves.moves[0];
+        int prev_beta = beta;
+
+        std::vector<std::pair<int, int>> move_scores(all_moves.moves_count);
+        for (int i = 0; i < all_moves.moves_count; ++i)
+            move_scores[i] = {i, MAX}; 
+
+        for (int current_depth = 2; current_depth <= depth; current_depth += 2)
+        {
+            clock_gettime(CLOCK_MONOTONIC, &start);
+
+            boost::unordered_flat_map<field_t, ttentry_t, field_t> newcache[current_depth];
+            for (int i = 0; i < current_depth; ++i)
+                newcache[i].reserve(1024);
+
+            if (current_depth > 2)
+            {
+                std::stable_sort(move_scores.begin(), move_scores.end(),
+                                 [](const auto &a, const auto &b)
+                                 {
+                                     if (a.second != b.second)
+                                         return a.second < b.second;
+                                     return a.first < b.first;
+                                 });
+            }
+
+            int iteration_beta = prev_beta + 1;
+            for (int i = 0; i < all_moves.moves_count; ++i)
+            {
+                int move_idx = move_scores[i].first;
+
+                int childres = minimax(current_depth - 1, iteration_beta - 1, iteration_beta, true, all_moves.moves[move_idx], newcache);
+                if (childres < iteration_beta)
+                    childres = minimax(current_depth - 1, alpha, iteration_beta, true, all_moves.moves[move_idx], newcache);
+
+                move_scores[i].second = childres;
+
+                if (childres < iteration_beta)
+                {
+                    best_field = all_moves.moves[move_idx];
+                    iteration_beta = childres;
+                }
+            }
+
+            if (iteration_beta == prev_beta + 1)
+            {
+                debug_printf("Guess failed\n");
+
+                iteration_beta = MAX;
+                for (int i = 0; i < all_moves.moves_count; ++i)
+                {
+                    int move_idx = move_scores[i].first;
+                    int childres;
+
+                    if (i == 0)
+                    {
+                        childres = minimax(current_depth - 1, alpha, iteration_beta, true, all_moves.moves[move_idx], newcache);
+                    }
+                    else
+                    {
+                        childres = minimax(current_depth - 1, iteration_beta - 1, iteration_beta, true, all_moves.moves[move_idx], newcache);
+                        if (childres < iteration_beta)
+                            childres = minimax(current_depth - 1, alpha, iteration_beta, true, all_moves.moves[move_idx], newcache);
+                    }
+
+                    move_scores[i].second = childres;
+
+                    if (childres < iteration_beta)
+                    {
+                        best_field = all_moves.moves[move_idx];
+                        iteration_beta = childres;
+                    }
+                }
+            }
+
+            debug_printf("Search order: ");
+            for (int i = 0; i < all_moves.moves_count; ++i)
+            {
+                debug_printf("%d, ", move_scores[i].first);
+            }
+            debug_printf("\n");
+
+            clock_gettime(CLOCK_MONOTONIC, &stop);
+
+            int64_t cur_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000);
+            debug_printf("Depth %d completed in %ld ms, evaluation: %d\n", current_depth, cur_time, iteration_beta);
+
+            if (current_depth == depth)
+                max_time = cur_time;
+
+            prev_beta = iteration_beta;
+            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_beta};
+        }
+
+        return best_result;
     }
 }
 
@@ -4237,13 +4507,13 @@ void add_card_controls()
 void *ai_move_thread(void *args)
 {
     debug_printf("adaptive_ai_level = %d\n", adaptive_ai_level);
-    minimax_main_result_t move = minimax_single_main(adaptive_ai_level, MIN, MAX, true, pos);
+    minimax_main_result_t move = minimax_iteration_main(adaptive_ai_level, MIN, MAX, true, pos);
 
-    if (max_time < 600000000ll && adaptive_ai_level < 20)
+    if (max_time < 500 && adaptive_ai_level < 20)
     {
         adaptive_ai_level += 2;
     }
-    else if (max_time > 10000000000ll && adaptive_ai_level > ai_level)
+    else if (max_time > 10000 && adaptive_ai_level > ai_level)
     {
         adaptive_ai_level -= 2;
     }
