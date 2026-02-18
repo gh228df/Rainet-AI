@@ -1,12 +1,6 @@
 #include "rnab.hpp"
 #include "amalgamation.h"
 
-#ifdef ENGINE_DEBUG
-#define debug_printf(...) printf(__VA_ARGS__)
-#else
-#define debug_printf(...) ((void)0)
-#endif
-
 #define HIDE_ENEMY_CARDS false
 
 GLFWwindow *window;
