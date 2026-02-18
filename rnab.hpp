@@ -32,6 +32,12 @@ const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58,
 
 #endif
 
+#ifdef RNAB_DEBUG
+#define debug_printf(...) printf(__VA_ARGS__)
+#else
+#define debug_printf(...) ((void)0)
+#endif
+
 int cur_search_depth = 0;
 
 struct alignas(8) field_t
@@ -2865,21 +2871,21 @@ void *maximize_worker(void *arg)
     {
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Maximize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
+            debug_printf("Maximize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
         clock_gettime(CLOCK_MONOTONIC, &start);
         worker_data->score = minimax(worker_data->depth - 1, worker_data->score, worker_data->beta, false, *worker_data->field_t, newcache);
         clock_gettime(CLOCK_MONOTONIC, &stop);
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Maximize second minimax call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
+            debug_printf("Maximize second minimax call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
     }
     else
     {
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
+            debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->alpha, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
     }
     return NULL;
@@ -2903,21 +2909,21 @@ void *minimize_worker(void *arg)
     {
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Minimize first minimax improv call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
+            debug_printf("Minimize first minimax improv call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
         clock_gettime(CLOCK_MONOTONIC, &start);
         worker_data->score = minimax(worker_data->depth - 1, worker_data->alpha, worker_data->score, true, *worker_data->field_t, newcache);
         clock_gettime(CLOCK_MONOTONIC, &stop);
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Minimize second minimax call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
+            debug_printf("Minimize second minimax call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
     }
     else
     {
         pthread_mutex_lock(worker_data->mtx);
         if (worker_data->printing)
-            printf("Minimize first minimax no-improv call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
+            debug_printf("Minimize first minimax no-improv call time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), worker_data->beta, worker_data->score);
         pthread_mutex_unlock(worker_data->mtx);
     }
     return NULL;
@@ -3119,7 +3125,7 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
             {
                 childres = minimax(depth - 1, alpha, beta, false, all_moves.moves[i], newcache);
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-                printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
             }
             else
             {
@@ -3127,15 +3133,15 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
                 clock_gettime(CLOCK_MONOTONIC, &stop);
                 if (childres > alpha)
                 {
-                    printf("Maximize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                    debug_printf("Maximize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
                     clock_gettime(CLOCK_MONOTONIC, &start);
                     childres = minimax(depth - 1, alpha, beta, false, all_moves.moves[i], newcache);
                     clock_gettime(CLOCK_MONOTONIC, &stop);
-                    printf("Maximize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                    debug_printf("Maximize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
                 }
                 else
                 {
-                    printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                    debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
                 }
             }
 
@@ -3169,7 +3175,7 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
             {
                 childres = minimax(depth - 1, alpha, beta, true, all_moves.moves[i], newcache);
                 clock_gettime(CLOCK_MONOTONIC, &stop);
-                printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
             }
             else
             {
@@ -3177,15 +3183,15 @@ minimax_main_result_t minimax_single_main(const int depth, int alpha, int beta, 
                 clock_gettime(CLOCK_MONOTONIC, &stop);
                 if (childres < beta)
                 {
-                    printf("Minimize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                    debug_printf("Minimize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
                     clock_gettime(CLOCK_MONOTONIC, &start);
                     childres = minimax(depth - 1, alpha, beta, true, all_moves.moves[i], newcache);
                     clock_gettime(CLOCK_MONOTONIC, &stop);
-                    printf("Minimize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                    debug_printf("Minimize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
                 }
                 else
                 {
-                    printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                    debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
                 }
             }
 
@@ -3260,7 +3266,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             if (iteration_alpha == prev_alpha - 56)
             {
-                printf("Guess failed\n");
+                debug_printf("Guess failed\n");
 
                 iteration_alpha = MIN;
                 for (int i = 0; i < all_moves.moves_count; ++i)
@@ -3288,15 +3294,15 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                 }
             }
 
-            printf("Search order: ");
+            debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
-                printf("%d, ", move_scores[i].first);
+                debug_printf("%d, ", move_scores[i].first);
             }
-            printf("\n");
+            debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
-            printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
+            debug_printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
                    current_depth,
                    (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
                    iteration_alpha,
@@ -3364,7 +3370,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             if (iteration_beta == prev_beta + 56)
             {
-                printf("Guess failed\n");
+                debug_printf("Guess failed\n");
 
                 iteration_beta = MAX;
                 for (int i = 0; i < all_moves.moves_count; ++i)
@@ -3393,15 +3399,15 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                 }
             }
 
-            printf("Search order: ");
+            debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
-                printf("%d, ", move_scores[i].first);
+                debug_printf("%d, ", move_scores[i].first);
             }
-            printf("\n");
+            debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
-            printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
+            debug_printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
                    current_depth,
                    (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
                    iteration_beta,
