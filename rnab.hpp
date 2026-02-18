@@ -1,16 +1,13 @@
-#include <ankerl/unordered_dense.h>
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <pthread.h>
 #include <time.h>
-#include <thread>
-#if defined(__x86_64__) || defined(_M_X64)
-#include <immintrin.h>
-#endif
 
 const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
 
 #ifndef GAME_CONSTANTS
 #define GAME_CONSTANTS
+
+#define MAX_MOVES 80
 
 #define MIN -1000000
 #define MAX 1000000
@@ -116,49 +113,10 @@ struct alignas(8) field_t
 
     // Those are actually faster (and smaller) than the standart implementations!
 
-#if defined(__AVX512F__) && defined(__AVX512BW__)
-    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
-    {
-        _mm512_mask_storeu_epi8(reinterpret_cast<void *>(this), 0xFFFFFFFFFFULL, _mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(&other)));
-        return *this;
-    }
-
     inline __attribute__((always_inline)) bool operator==(const field_t &other) const
     {
-        return _mm512_cmpeq_epi8_mask(_mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(this)), _mm512_maskz_loadu_epi8(0xFFFFFFFFFFULL, reinterpret_cast<const void *>(&other))) == 0xFFFFFFFFFFFFFFFFULL;
+        return __builtin_memcmp(this, &other, sizeof(field_t)) == 0;
     }
-
-#elif defined(__AVX2__)
-    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
-    {
-        _mm256_storeu_si256((__m256i *)(this), _mm256_loadu_si256((const __m256i *)(&other)));
-        *((uint64_t *)this + 4) = *((uint64_t *)&other + 4);
-        return *this;
-    }
-
-    inline __attribute__((always_inline)) bool operator==(const field_t &other) const
-    {
-        return _mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_loadu_si256((const __m256i *)(this)), _mm256_loadu_si256((const __m256i *)(&other)))) == 0xFFFFFFFF && *(uint64_t *)((uint8_t *)this + 32) == *(uint64_t *)((uint8_t *)&other + 32);
-    }
-
-#elif defined(__SSE2__)
-    inline __attribute__((always_inline)) field_t &operator=(const field_t &other)
-    {
-        _mm_storeu_si128((__m128i *)((uint8_t *)this + 0), _mm_loadu_si128((const __m128i *)((uint8_t *)&other + 0)));
-        _mm_storeu_si128((__m128i *)((uint8_t *)this + 16), _mm_loadu_si128((const __m128i *)((uint8_t *)&other + 16)));
-        *((uint64_t *)this + 4) = *((uint64_t *)&other + 4);
-        return *this;
-    }
-
-    inline __attribute__((always_inline)) bool operator==(const field_t &other) const
-    {
-        return _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i_u *)((uint8_t *)this + 0)), _mm_loadu_si128((const __m128i_u *)((uint8_t *)&other + 0)))) == 0xFFFF && _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i_u *)((uint8_t *)this + 16)), _mm_loadu_si128((const __m128i_u *)((uint8_t *)&other + 16)))) == 0xFFFF && *(uint64_t *)((uint8_t *)this + 32) == *(uint64_t *)((uint8_t *)&other + 32);
-    }
-
-#else
-    inline __attribute__((always_inline)) field_t &operator=(const field_t &) = default;
-    inline __attribute__((always_inline)) bool operator==(const field_t &) const = default;
-#endif
 
     void print_field()
     {
@@ -239,7 +197,7 @@ struct ttentry_t
 
 struct possible_moves_t
 {
-    field_t moves[80];
+    field_t moves[MAX_MOVES];
     int moves_count;
 };
 
@@ -3215,14 +3173,14 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
     if (player)
     {
         possible_moves_t all_moves = possible_moves(position, true);
-        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+        for (int i = 0; i < all_moves.moves_count; ++i)
             if (all_moves.moves[i].fir_link > 3)
                 return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (32768 * depth)};
 
         field_t best_field = all_moves.moves[0];
         int prev_alpha = alpha;
 
-        std::vector<std::pair<int, int>> move_scores(all_moves.moves_count);
+        std::pair<int, int> move_scores[MAX_MOVES];
         for (int i = 0; i < all_moves.moves_count; ++i)
             move_scores[i] = {i, MIN};
 
@@ -3237,7 +3195,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             if (current_depth > 2)
             {
-                std::stable_sort(move_scores.begin(), move_scores.end(),
+                std::stable_sort(move_scores, move_scores + all_moves.moves_count,
                                  [](const auto &a, const auto &b)
                                  {
                                      if (a.second != b.second)
@@ -3284,7 +3242,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
                             childres = minimax(current_depth - 1, iteration_alpha, beta, false, all_moves.moves[move_idx], newcache);
                     }
 
-                    move_scores[i].second = childres; // Update score
+                    move_scores[i].second = childres;
 
                     if (childres > iteration_alpha)
                     {
@@ -3296,21 +3254,18 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
-            {
                 debug_printf("%d, ", move_scores[i].first);
-            }
             debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
             debug_printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
-                   current_depth,
-                   (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
-                   iteration_alpha,
-                   rec_counter - cur_rec_count,
-                   (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
+                         current_depth,
+                         (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
+                         iteration_alpha,
+                         rec_counter - cur_rec_count,
+                         (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
 
             prev_alpha = iteration_alpha;
-
             best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_alpha};
         }
 
@@ -3319,14 +3274,14 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
     else
     {
         possible_moves_t all_moves = possible_moves(position, false);
-        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
+        for (int i = 0; i < all_moves.moves_count; ++i)
             if (all_moves.moves[i].sec_link > 3)
                 return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
 
         field_t best_field = all_moves.moves[0];
         int prev_beta = beta;
 
-        std::vector<std::pair<int, int>> move_scores(all_moves.moves_count);
+        std::pair<int, int> move_scores[MAX_MOVES];
         for (int i = 0; i < all_moves.moves_count; ++i)
             move_scores[i] = {i, MAX};
 
@@ -3341,7 +3296,7 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             if (current_depth > 2)
             {
-                std::stable_sort(move_scores.begin(), move_scores.end(),
+                std::stable_sort(move_scores, move_scores + all_moves.moves_count,
                                  [](const auto &a, const auto &b)
                                  {
                                      if (a.second != b.second)
@@ -3401,18 +3356,16 @@ minimax_main_result_t minimax_iteration_main(const int depth, int alpha, int bet
 
             debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
-            {
                 debug_printf("%d, ", move_scores[i].first);
-            }
             debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
             debug_printf("Depth %d completed in %ld ms, evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
-                   current_depth,
-                   (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
-                   iteration_beta,
-                   rec_counter - cur_rec_count,
-                   (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
+                         current_depth,
+                         (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000),
+                         iteration_beta,
+                         rec_counter - cur_rec_count,
+                         (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
 
             prev_beta = iteration_beta;
             best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_beta};
