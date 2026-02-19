@@ -16,10 +16,10 @@ option(BUILD_LIBRARY "Build as shared library instead of executable" OFF)
 
 if(WIN32)
     option(BUILD_STATIC "Build static executable (Windows only)" ON)
-    message(STATUS "Windows detected → static build option available (default ON)")
+    message(STATUS "Windows detected -> static build option available (default ON)")
 else()
     set(BUILD_STATIC OFF CACHE BOOL "Static build (disabled on non-Windows)" FORCE)
-    message(STATUS "Non-Windows platform → forcing dynamic build (BUILD_STATIC=OFF)")
+    message(STATUS "Non-Windows platform -> forcing dynamic build (BUILD_STATIC=OFF)")
 endif()
 
 # ─────────────────────────────────────────────
@@ -51,10 +51,10 @@ string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" PROC_LOWER)
 
 if(PROC_LOWER MATCHES "x86_64|amd64|i[3-9]86|i686|x86|i386")
     set(IS_X86 TRUE)
-    message(STATUS "Building for x86-family → including SIMD variants")
+    message(STATUS "Building for x86-family -> including SIMD variants")
 else()
     set(IS_X86 FALSE)
-    message(STATUS "Non-x86 architecture (${CMAKE_SYSTEM_PROCESSOR}) → scalar only")
+    message(STATUS "Non-x86 architecture (${CMAKE_SYSTEM_PROCESSOR}) -> scalar only")
 endif()
 
 # ─────────────────────────────────────────────
@@ -89,27 +89,32 @@ set_source_files_properties(${HEADER_AS_SOURCE} ${COMMON_SOURCES} PROPERTIES LAN
 add_library(rnab_scalar OBJECT ${HEADER_AS_SOURCE})
 target_compile_definitions(rnab_scalar PRIVATE TU_COMPILE SIMD_SUFFIX=scalar)
 apply_common_options(rnab_scalar)
+set_target_properties(rnab_scalar PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(IS_X86)
     add_library(rnab_sse42 OBJECT ${HEADER_AS_SOURCE})
     target_compile_options(rnab_sse42 PRIVATE -msse4.2)
     target_compile_definitions(rnab_sse42 PRIVATE TU_COMPILE SIMD_SUFFIX=sse4_2)
     apply_common_options(rnab_sse42)
+    set_target_properties(rnab_sse42 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(rnab_avx OBJECT ${HEADER_AS_SOURCE})
     target_compile_options(rnab_avx PRIVATE -mavx)
     target_compile_definitions(rnab_avx PRIVATE TU_COMPILE SIMD_SUFFIX=avx)
     apply_common_options(rnab_avx)
+    set_target_properties(rnab_avx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(rnab_avx2 OBJECT ${HEADER_AS_SOURCE})
     target_compile_options(rnab_avx2 PRIVATE -mavx2 -mfma)
     target_compile_definitions(rnab_avx2 PRIVATE TU_COMPILE SIMD_SUFFIX=avx2)
     apply_common_options(rnab_avx2)
+    set_target_properties(rnab_avx2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(rnab_avx512 OBJECT ${HEADER_AS_SOURCE})
     target_compile_options(rnab_avx512 PRIVATE -mavx512f -mavx512vl -mavx512bw -mavx512dq)
     target_compile_definitions(rnab_avx512 PRIVATE TU_COMPILE SIMD_SUFFIX=avx512f)
     apply_common_options(rnab_avx512)
+    set_target_properties(rnab_avx512 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # ─────────────────────────────────────────────
@@ -174,17 +179,20 @@ if(NOT BUILD_LIBRARY)
 endif()
 
 # ─────────────────────────────────────────────
-# Link-time options (executable only)
+# Link-time options
 # ─────────────────────────────────────────────
 
-if(NOT BUILD_LIBRARY)
-    # This works on Linux (ld.lld) and Windows (lld-link when using MinGW-style clang)
-    target_link_options(rnab PRIVATE -fuse-ld=lld -flto)  # Enable -flto at link time
+target_link_options(rnab PRIVATE -fuse-ld=lld -flto)  # Enable -flto at link time
 
-    if(ENABLE_STRIP)
-        target_link_options(rnab PRIVATE -s)
-        message(STATUS "Symbol stripping enabled (-s) for executable")
-    endif()
+# Static runtime libs inside the shared library (removes libstdc++ / libgcc_s from ldd)
+if(BUILD_LIBRARY)
+    target_link_options(rnab PRIVATE -static-libstdc++ -static-libgcc)
+    message(STATUS "Shared library: libstdc++ and libgcc linked statically inside .so")
+endif()
+
+if(ENABLE_STRIP)
+    target_link_options(rnab PRIVATE -s)
+    message(STATUS "Symbol stripping enabled (-s)")
 endif()
 
 # ─────────────────────────────────────────────
@@ -192,9 +200,7 @@ endif()
 # ─────────────────────────────────────────────
 
 message(STATUS "Compiler:      ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-if(NOT BUILD_LIBRARY)
-    message(STATUS "Linker flag:   -fuse-ld=lld")
-endif()
+message(STATUS "Linker flag:   -fuse-ld=lld")
 message(STATUS "BUILD_LIBRARY: ${BUILD_LIBRARY}")
 message(STATUS "BUILD_STATIC:  ${BUILD_STATIC}")
 message(STATUS "RNAB_DEBUG:    ${RNAB_DEBUG}")
