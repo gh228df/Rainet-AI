@@ -26,7 +26,7 @@ endif()
 # Global compile options
 # ─────────────────────────────────────────────
 
-add_compile_options(-O3 -flto)  # Enable -flto universally
+add_compile_options(-O3 -flto)
 
 # ─────────────────────────────────────────────
 # Static build flags (Windows only, for executable)
@@ -68,7 +68,7 @@ function(apply_common_options target)
 endfunction()
 
 # ─────────────────────────────────────────────
-# Common source files (varies by build mode)
+# Common source files
 # ─────────────────────────────────────────────
 
 if(BUILD_LIBRARY)
@@ -136,21 +136,12 @@ else()
 endif()
 
 if(IS_X86)
-    if(BUILD_LIBRARY)
-        target_sources(rnab PRIVATE
-            $<TARGET_OBJECTS:rnab_sse42>
-            $<TARGET_OBJECTS:rnab_avx>
-            $<TARGET_OBJECTS:rnab_avx2>
-            $<TARGET_OBJECTS:rnab_avx512>
-        )
-    else()
-        target_sources(rnab PRIVATE
-            $<TARGET_OBJECTS:rnab_sse42>
-            $<TARGET_OBJECTS:rnab_avx>
-            $<TARGET_OBJECTS:rnab_avx2>
-            $<TARGET_OBJECTS:rnab_avx512>
-        )
-    endif()
+    target_sources(rnab PRIVATE
+        $<TARGET_OBJECTS:rnab_sse42>
+        $<TARGET_OBJECTS:rnab_avx>
+        $<TARGET_OBJECTS:rnab_avx2>
+        $<TARGET_OBJECTS:rnab_avx512>
+    )
 endif()
 
 target_include_directories(rnab PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -176,18 +167,29 @@ if(NOT BUILD_LIBRARY)
             zstd
         )
     endif()
+else()
+    if(WIN32)
+        target_link_libraries(rnab PRIVATE
+            pthread
+        )
+    endif()
 endif()
 
 # ─────────────────────────────────────────────
-# Link-time options
+# Link-time options + ALWAYS static for library
 # ─────────────────────────────────────────────
 
-target_link_options(rnab PRIVATE -fuse-ld=lld -flto)  # Enable -flto at link time
+target_link_options(rnab PRIVATE -fuse-ld=lld -flto)
 
-# Static runtime libs inside the shared library (removes libstdc++ / libgcc_s from ldd)
+# ALWAYS compile the library statically (runtime + full static linking)
+# regardless of OS, BUILD_STATIC, or any other parameter.
 if(BUILD_LIBRARY)
-    target_link_options(rnab PRIVATE -static-libstdc++ -static-libgcc)
-    message(STATUS "Shared library: libstdc++ and libgcc linked statically inside .so")
+    target_link_options(rnab PRIVATE
+        -static
+        -static-libstdc++
+        -static-libgcc
+    )
+    message(STATUS "Shared library: FULL static runtime (libstdc++ + libgcc + -static) embedded (any OS)")
 endif()
 
 if(ENABLE_STRIP)
