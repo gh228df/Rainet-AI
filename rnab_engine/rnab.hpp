@@ -29,6 +29,12 @@ extern possible_moves_t possible_moves_sse4_2(const field_t *position, const boo
 
 #endif
 
+#ifdef _WIN32
+#define EXPORT_API __declspec(dllexport)
+#else
+#define EXPORT_API __attribute__((visibility("default")))
+#endif
+
 struct generic_representation
 {
     int32_t player_first_link_1_pos;
@@ -131,7 +137,7 @@ generic_representation intern_to_generic_representation(field_t pos)
     return res;
 }
 
-void rnab_engine_init()
+extern "C" EXPORT_API void rnab_engine_init()
 {
 #if defined(__x86_64__)
     minimax_iteration_main = ((__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512dq")) ? minimax_iteration_main_avx512f : ((__builtin_cpu_supports("avx2")) ? minimax_iteration_main_avx2 : ((__builtin_cpu_supports("avx")) ? minimax_iteration_main_avx : ((__builtin_cpu_supports("sse4.2")) ? minimax_iteration_main_sse4_2 : minimax_iteration_main_scalar))));
@@ -144,7 +150,7 @@ void rnab_engine_init()
 #endif
 }
 
-generic_representation rnab_compute_best_move(int32_t max_depth, int64_t max_search_time, int32_t player, generic_representation *game_state)
+extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_depth, int64_t max_search_time, int32_t player, generic_representation *game_state)
 {
     assert(minimax_iteration_main);
     assert(minimax_main);
