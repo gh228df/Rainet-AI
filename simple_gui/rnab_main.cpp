@@ -1,4 +1,4 @@
-#include "rnab.hpp"
+#include "../rnab_engine/rnab.hpp"
 #include "amalgamation.h"
 #include <pthread.h>
 
@@ -1628,19 +1628,6 @@ void begin_game(struct button_t *self)
 
 int main()
 {   
-
-    for (int i = 0; i < 70; ++i)
-    {
-        struct timespec start_it, stop_it;
-        pos = field_t(indexes[23], indexes[i]);
-        clock_gettime(CLOCK_MONOTONIC, &start_it);
-        minimax_main_result_t move = minimax_iteration_main(14, 2000, MIN, MAX, true, &pos);
-        clock_gettime(CLOCK_MONOTONIC, &stop_it);
-        printf("%d     %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
-
-        return 0;
-    }
-
     srand(time(NULL));
 
     init("rnab");
