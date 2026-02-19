@@ -1631,6 +1631,7 @@ int main()
     srand(time(NULL));
 
     init("rnab");
+    rnab_engine_init();
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
