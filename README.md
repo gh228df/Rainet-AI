@@ -14,6 +14,12 @@ This project is written in **C++** and relies on the following external librarie
   Specifically: `#include <boost/unordered/unordered_flat_map.hpp>`  
   Provides a high-performance, flat hash map implementation used for transposition tables / caching in the search algorithm.
 
+  Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)
+
+## Integration
+
+This project can be compiled into a standalone library which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
+
 ## Current Limitations
 
 This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. Here's what it's currently not great at:
