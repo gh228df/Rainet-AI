@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(RNAB_DEBUG    "Enable RNAB debug mode"                ON)
 option(ENABLE_STRIP  "Strip symbols from binary (-s)"        ON)
-option(BUILD_LIBRARY "Build as static library instead of executable" ON)
+option(BUILD_LIBRARY "Build as shared library instead of executable" OFF)
 
 if(WIN32)
     option(BUILD_STATIC "Build static executable (Windows only)" ON)
@@ -68,18 +68,18 @@ function(apply_common_options target)
 endfunction()
 
 # ─────────────────────────────────────────────
-# Common source files
+# Common source files (varies by build mode)
 # ─────────────────────────────────────────────
 
 if(BUILD_LIBRARY)
-    set(COMMON_SOURCES rnab.hpp)
-    message(STATUS "Building as library → using rnab.hpp as dispatcher source")
+    set(COMMON_SOURCES rnab_engine/rnab.hpp)
+    message(STATUS "Building as library -> using rnab.hpp as dispatcher source")
 else()
-    set(COMMON_SOURCES rnab_main.cpp)
-    message(STATUS "Building as executable → using rnab_main.cpp")
+    set(COMMON_SOURCES simple_gui/rnab_main.cpp)
+    message(STATUS "Building as executable -> using rnab_main.cpp")
 endif()
 
-set(HEADER_AS_SOURCE rnab_impl.hpp)
+set(HEADER_AS_SOURCE rnab_engine/rnab_impl.hpp)
 set_source_files_properties(${HEADER_AS_SOURCE} ${COMMON_SOURCES} PROPERTIES LANGUAGE CXX)
 
 # ─────────────────────────────────────────────
@@ -117,11 +117,11 @@ endif()
 # ─────────────────────────────────────────────
 
 if(BUILD_LIBRARY)
-    add_library(rnab STATIC
+    add_library(rnab SHARED
         ${COMMON_SOURCES}
         $<TARGET_OBJECTS:rnab_scalar>
     )
-    message(STATUS "Building static library: librnab.a (or .lib on Windows)")
+    message(STATUS "Building shared library: librnab.so (or .dll on Windows)")
 else()
     add_executable(rnab
         ${COMMON_SOURCES}
@@ -178,6 +178,7 @@ endif()
 # ─────────────────────────────────────────────
 
 if(NOT BUILD_LIBRARY)
+    # This works on Linux (ld.lld) and Windows (lld-link when using MinGW-style clang)
     target_link_options(rnab PRIVATE -fuse-ld=lld -flto)  # Enable -flto at link time
 
     if(ENABLE_STRIP)
