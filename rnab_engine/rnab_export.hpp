@@ -12,22 +12,8 @@ extern "C"
 {
     struct generic_representation
     {
-        int32_t player_first_link_1_pos;
-        int32_t player_first_link_2_pos;
-        int32_t player_first_link_3_pos;
-        int32_t player_first_link_4_pos;
-        int32_t player_first_virus_1_pos;
-        int32_t player_first_virus_2_pos;
-        int32_t player_first_virus_3_pos;
-        int32_t player_first_virus_4_pos;
-        int32_t player_second_link_1_pos;
-        int32_t player_second_link_2_pos;
-        int32_t player_second_link_3_pos;
-        int32_t player_second_link_4_pos;
-        int32_t player_second_virus_1_pos;
-        int32_t player_second_virus_2_pos;
-        int32_t player_second_virus_3_pos;
-        int32_t player_second_virus_4_pos;
+        uint64_t player_first_card_mask;
+        uint64_t player_second_card_mask;
         int32_t player_first_boosted_cell;
         int32_t player_second_boosted_cell;
         int32_t player_first_firewalled_cell;
@@ -43,6 +29,6 @@ extern "C"
     };
 
     void rnab_engine_init();
-    
-    generic_representation rnab_compute_best_move(int32_t max_depth, int64_t max_search_time, int32_t player, generic_representation *game_state);
+
+    void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player);
 }
