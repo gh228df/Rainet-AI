@@ -37,22 +37,8 @@ extern possible_moves_t possible_moves_sse4_2(const field_t *position, const boo
 
 struct generic_representation
 {
-    int32_t player_first_link_1_pos;
-    int32_t player_first_link_2_pos;
-    int32_t player_first_link_3_pos;
-    int32_t player_first_link_4_pos;
-    int32_t player_first_virus_1_pos;
-    int32_t player_first_virus_2_pos;
-    int32_t player_first_virus_3_pos;
-    int32_t player_first_virus_4_pos;
-    int32_t player_second_link_1_pos;
-    int32_t player_second_link_2_pos;
-    int32_t player_second_link_3_pos;
-    int32_t player_second_link_4_pos;
-    int32_t player_second_virus_1_pos;
-    int32_t player_second_virus_2_pos;
-    int32_t player_second_virus_3_pos;
-    int32_t player_second_virus_4_pos;
+    uint64_t player_first_card_mask;
+    uint64_t player_second_card_mask;
     int32_t player_first_boosted_cell;
     int32_t player_second_boosted_cell;
     int32_t player_first_firewalled_cell;
@@ -70,51 +56,9 @@ struct generic_representation
 generic_representation intern_to_generic_representation(field_t pos)
 {
     generic_representation res = {0};
-    uint64_t temp;
-
-    temp = pos.is_fir_mask & pos.is_link_mask;
-
-    res.player_first_link_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_link_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_link_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_link_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-
-    temp = pos.is_fir_mask & (~pos.is_link_mask);
-
-    res.player_first_virus_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_virus_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_virus_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_first_virus_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-
-    temp = pos.is_sec_mask & pos.is_link_mask;
-
-    res.player_second_link_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_link_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_link_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_link_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-
-    temp = pos.is_sec_mask & (~pos.is_link_mask);
-
-    res.player_second_virus_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_virus_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_virus_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
-    res.player_second_virus_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
-    temp &= (temp - 1);
+    
+    res.player_first_card_mask = pos.is_fir_mask;
+    res.player_second_card_mask = pos.is_sec_mask;
 
     res.player_first_boosted_cell = ((pos.is_fir_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_fir_mask & pos.is_boosted_mask)) : -1);
     res.player_second_boosted_cell = ((pos.is_sec_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_sec_mask & pos.is_boosted_mask)) : -1);
@@ -150,7 +94,7 @@ extern "C" EXPORT_API void rnab_engine_init()
 #endif
 }
 
-extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_depth, int64_t max_search_time, int32_t player, generic_representation *game_state)
+extern "C" EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player)
 {
     assert(minimax_iteration_main);
     assert(minimax_main);
@@ -160,91 +104,49 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
 #define IS_ARG_LEGIT(arg_var) \
     assert((arg_var == -1 || (arg_var >= 0 && arg_var <= 63)) && "Illegal argument (" #arg_var ")")
 
-#define PLACE_AND_CHECK_VIRUS(virus_var, player_mask_var, is_adv_rev)                                          \
-    if (virus_var >= 0 && virus_var <= 63)                                                                     \
-    {                                                                                                          \
-        const uint64_t cur_mask = 1ULL << virus_var;                                                           \
-                                                                                                               \
-        assert((player_mask_var & cur_mask) == 0 && "Cards may not be on top of each other (" #virus_var ")"); \
-                                                                                                               \
-        if (is_adv_rev)                                                                                        \
-            position.forward_adv_fir += 7 - (virus_var >> 3);                                                  \
-        else                                                                                                   \
-            position.forward_adv_sec += (virus_var >> 3);                                                      \
-        player_mask_var |= cur_mask;                                                                           \
-    }
-
-#define PLACE_AND_CHECK_LINK(link_var, player_mask_var, link_mask, is_adv_rev)                                                               \
-    if (link_var >= 0 && link_var <= 63)                                                                                                     \
-    {                                                                                                                                        \
-        const uint64_t cur_mask = 1ULL << link_var;                                                                                          \
-                                                                                                                                             \
-        assert((player_mask_var & cur_mask) == 0 && (link_mask & cur_mask) == 0 && "Cards may not be on top of each other (" #link_var ")"); \
-                                                                                                                                             \
-        if (is_adv_rev)                                                                                                                      \
-            position.forward_adv_fir += 7 - (link_var >> 3);                                                                                 \
-        else                                                                                                                                 \
-            position.forward_adv_sec += (link_var >> 3);                                                                                     \
-        player_mask_var |= cur_mask;                                                                                                         \
-        link_mask |= cur_mask;                                                                                                               \
-    }
-
-    assert(player == 0 || player == 1);
-
-    IS_ARG_LEGIT(game_state->player_first_link_1_pos);
-    IS_ARG_LEGIT(game_state->player_first_link_2_pos);
-    IS_ARG_LEGIT(game_state->player_first_link_3_pos);
-    IS_ARG_LEGIT(game_state->player_first_link_4_pos);
-
-    IS_ARG_LEGIT(game_state->player_first_virus_1_pos);
-    IS_ARG_LEGIT(game_state->player_first_virus_2_pos);
-    IS_ARG_LEGIT(game_state->player_first_virus_3_pos);
-    IS_ARG_LEGIT(game_state->player_first_virus_4_pos);
-
-    IS_ARG_LEGIT(game_state->player_second_link_1_pos);
-    IS_ARG_LEGIT(game_state->player_second_link_2_pos);
-    IS_ARG_LEGIT(game_state->player_second_link_3_pos);
-    IS_ARG_LEGIT(game_state->player_second_link_4_pos);
-
-    IS_ARG_LEGIT(game_state->player_second_virus_1_pos);
-    IS_ARG_LEGIT(game_state->player_second_virus_2_pos);
-    IS_ARG_LEGIT(game_state->player_second_virus_3_pos);
-    IS_ARG_LEGIT(game_state->player_second_virus_4_pos);
-
     IS_ARG_LEGIT(game_state->player_first_boosted_cell);
     IS_ARG_LEGIT(game_state->player_second_boosted_cell);
     IS_ARG_LEGIT(game_state->player_first_firewalled_cell);
     IS_ARG_LEGIT(game_state->player_second_firewalled_cell);
 
-    position.is_sec_mask = 0;
+    position.is_fir_mask = game_state->player_first_card_mask;
+    position.is_sec_mask = game_state->player_second_card_mask;
     position.is_link_mask = 0;
-    position.is_fir_mask = 0;
     position.is_boosted_mask = 0;
 
     position.firewall_fir = 0;
     position.firewall_sec = 0;
 
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_1_pos, position.is_fir_mask, position.is_link_mask, true);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_2_pos, position.is_fir_mask, position.is_link_mask, true);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_3_pos, position.is_fir_mask, position.is_link_mask, true);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_4_pos, position.is_fir_mask, position.is_link_mask, true);
-
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_1_pos, position.is_fir_mask, true);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_2_pos, position.is_fir_mask, true);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_3_pos, position.is_fir_mask, true);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_4_pos, position.is_fir_mask, true);
-
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_1_pos, position.is_sec_mask, position.is_link_mask, false);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_2_pos, position.is_sec_mask, position.is_link_mask, false);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_3_pos, position.is_sec_mask, position.is_link_mask, false);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_4_pos, position.is_sec_mask, position.is_link_mask, false);
-
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_1_pos, position.is_sec_mask, false);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_2_pos, position.is_sec_mask, false);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_3_pos, position.is_sec_mask, false);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_4_pos, position.is_sec_mask, false);
+    position.forward_adv_fir = 0;
+    position.forward_adv_sec = 0;
 
     assert((position.is_fir_mask & position.is_sec_mask) == 0 && "Player one cards may not be on top of player two cards");
+
+    uint64_t temp;
+
+    temp = position.is_fir_mask;
+
+    while (temp)
+    {
+        const int cur_pos = __builtin_ctzll(temp);
+        const uint64_t cur_mask = 1ULL << cur_pos;
+
+        position.forward_adv_fir += (7 - (cur_pos >> 3));
+
+        temp ^= cur_mask;
+    }
+
+    temp = position.is_sec_mask;
+
+    while (temp)
+    {
+        const int cur_pos = __builtin_ctzll(temp);
+        const uint64_t cur_mask = 1ULL << cur_pos;
+
+        position.forward_adv_sec += (cur_pos >> 3);
+
+        temp ^= cur_mask;
+    }
 
     if (game_state->player_first_boosted_cell >= 0 && game_state->player_first_boosted_cell <= 63)
     {
@@ -332,5 +234,7 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
 #undef IS_ARG_LEGIT
 #undef PLACE_AND_CHECK_VIRUS
 #undef PLACE_AND_CHECK_LINK
-    return intern_to_generic_representation(res.best_field);
+    *game_state = intern_to_generic_representation(res.best_field);
+
+    return;
 }
