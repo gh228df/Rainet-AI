@@ -39,6 +39,7 @@ struct generic_representation
 {
     uint64_t player_first_card_mask;
     uint64_t player_second_card_mask;
+    uint64_t link_card_mask;
     int32_t player_first_boosted_cell;
     int32_t player_second_boosted_cell;
     int32_t player_first_firewalled_cell;
@@ -59,6 +60,8 @@ generic_representation intern_to_generic_representation(field_t pos)
     
     res.player_first_card_mask = pos.is_fir_mask;
     res.player_second_card_mask = pos.is_sec_mask;
+
+    res.link_card_mask = pos.is_link_mask;
 
     res.player_first_boosted_cell = ((pos.is_fir_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_fir_mask & pos.is_boosted_mask)) : -1);
     res.player_second_boosted_cell = ((pos.is_sec_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_sec_mask & pos.is_boosted_mask)) : -1);
@@ -111,7 +114,7 @@ extern "C" EXPORT_API void rnab_compute_best_move(generic_representation *game_s
 
     position.is_fir_mask = game_state->player_first_card_mask;
     position.is_sec_mask = game_state->player_second_card_mask;
-    position.is_link_mask = 0;
+    position.is_link_mask = game_state->link_card_mask;
     position.is_boosted_mask = 0;
 
     position.firewall_fir = 0;
