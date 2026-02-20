@@ -17,24 +17,13 @@ The engine uses a flat `generic_representation` structure to describe the game s
 ```cpp
 struct generic_representation {
     // Player 1 (first) pieces
-    int32_t player_first_link_1_pos;
-    int32_t player_first_link_2_pos;
-    int32_t player_first_link_3_pos;
-    int32_t player_first_link_4_pos;
-    int32_t player_first_virus_1_pos;
-    int32_t player_first_virus_2_pos;
-    int32_t player_first_virus_3_pos;
-    int32_t player_first_virus_4_pos;
+    uint64_t player_first_card_mask;
 
     // Player 2 (second) pieces
-    int32_t player_second_link_1_pos;
-    int32_t player_second_link_2_pos;
-    int32_t player_second_link_3_pos;
-    int32_t player_second_link_4_pos;
-    int32_t player_second_virus_1_pos;
-    int32_t player_second_virus_2_pos;
-    int32_t player_second_virus_3_pos;
-    int32_t player_second_virus_4_pos;
+    uint64_t player_second_card_mask;
+
+    // Link Mask
+    uint64_t link_card_mask;
 
     // Power-ups & special cells (-1 = not active)
     int32_t player_first_boosted_cell;
@@ -61,8 +50,6 @@ struct generic_representation {
 ![Example board 1 - coordinate mapping](https://github.com/user-attachments/assets/cf79d3b8-bf93-4c0e-9441-3089365e6b4a)
 
 - Board is indexed **0–63** (8×8 grid - from rigth to left, bottom to top)
-- Unused pieces -> set position to **`-1`**
-- Order of links/viruses **does not matter**
 
 **Example** - Second player has links at positions 2, 11, 12 (no 4th link):
 
@@ -70,10 +57,8 @@ struct generic_representation {
 
     generic_representation state = {0};  // zero-initialize
     // ...
-    state.player_second_link_1_pos = 2;
-    state.player_second_link_2_pos = 11;
-    state.player_second_link_3_pos = 12;
-    state.player_second_link_4_pos = -1;
+    state.player_second_card_mask = (1ULL << 2) | (1ULL << 11) | (1ULL << 12);
+    state.link_card_mask = (1ULL << 2) | (1ULL << 11) | (1ULL << 12); // dont forget about setting the link mask
     // ...
 
 ### Power-ups & Boosts
@@ -92,14 +77,18 @@ struct generic_representation {
 
 ## Computing the Best Move
 
-    generic_representation rnab_compute_best_move(
+    void rnab_compute_best_move(
+        generic_representation *game_state
         int32_t                 max_depth,
         int64_t                 max_search_time,
-        int32_t                 player,
-        generic_representation *game_state
+        int32_t                 player
     );
 
 ### Parameters
+
+- `game_state`  
+  Pointer to a filled `generic_representation` struct
+  After computing the best move, the output will be written back to the 'game_state'
 
 - `max_depth`  
   Maximum minimax depth.  
@@ -112,9 +101,6 @@ struct generic_representation {
 - `player`  
   • `0` = first player to move  
   • `1` = second player to move
-
-- `game_state`  
-  Pointer to a filled `generic_representation` struct
 
 > **Important:** The function includes several runtime assertions that validate input follows game rules. Invalid data will trigger asserts.
 
