@@ -210,7 +210,7 @@ int SIMD_NAME(cur_search_depth) = 0;
             {                                                                                                                                                          \
                 if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
                 {                                                                                                                                                      \
-                    field_t temp = *position;                                                                                                                           \
+                    field_t temp = *position;                                                                                                                          \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                     temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
@@ -241,9 +241,9 @@ int SIMD_NAME(cur_search_depth) = 0;
                                                                                                                                                                        \
                     res.moves[res.moves_count++] = temp;                                                                                                               \
                 }                                                                                                                                                      \
-                else if (position->fir_virus < 3)                                                                                                                       \
+                else if (position->fir_virus < 3)                                                                                                                      \
                 {                                                                                                                                                      \
-                    field_t temp = *position;                                                                                                                           \
+                    field_t temp = *position;                                                                                                                          \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                     temp.is_boost_available_sec |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
@@ -276,7 +276,7 @@ int SIMD_NAME(cur_search_depth) = 0;
             }                                                                                                                                                          \
             else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
             {                                                                                                                                                          \
-                field_t temp = *position;                                                                                                                               \
+                field_t temp = *position;                                                                                                                              \
                                                                                                                                                                        \
                 temp.forward_adv_fir += forward_adv;                                                                                                                   \
                 if (is_boosted)                                                                                                                                        \
@@ -301,7 +301,7 @@ int SIMD_NAME(cur_search_depth) = 0;
             {                                                                                                                                                          \
                 if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
                 {                                                                                                                                                      \
-                    field_t temp = *position;                                                                                                                           \
+                    field_t temp = *position;                                                                                                                          \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                     temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
@@ -332,9 +332,9 @@ int SIMD_NAME(cur_search_depth) = 0;
                                                                                                                                                                        \
                     res.moves[res.moves_count++] = temp;                                                                                                               \
                 }                                                                                                                                                      \
-                else if (position->sec_virus < 3)                                                                                                                       \
+                else if (position->sec_virus < 3)                                                                                                                      \
                 {                                                                                                                                                      \
-                    field_t temp = *position;                                                                                                                           \
+                    field_t temp = *position;                                                                                                                          \
                                                                                                                                                                        \
                     int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
                     temp.is_boost_available_fir |= (((temp.is_boosted_mask & new_pos_bitboard) >> new_pos_coord) & 1);                                                 \
@@ -367,7 +367,7 @@ int SIMD_NAME(cur_search_depth) = 0;
             }                                                                                                                                                          \
             else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
             {                                                                                                                                                          \
-                field_t temp = *position;                                                                                                                               \
+                field_t temp = *position;                                                                                                                              \
                                                                                                                                                                        \
                 temp.forward_adv_sec += forward_adv;                                                                                                                   \
                 if (is_boosted)                                                                                                                                        \
@@ -2974,7 +2974,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
     SIMD_NAME(cur_search_depth) = max_depth;
     assert(max_depth >= 2 && max_depth % 2 == 0 && "Depth must be at least 2 and even (divisible by 2) for iterative deepening");
     assert(max_search_time >= 100 && "max_search_time must be at least 100 milliseconds");
-    assert(depth < MAX_DEPTH);
+    assert(max_depth < MAX_DEPTH);
 
 #ifdef RNAB_DEBUG
     printf("Calling minimax_iteration_main %s\n", STRINGIFY(SIMD_SUFFIX));
@@ -3012,13 +3012,18 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
             if (current_depth > 2)
             {
-                std::stable_sort(move_scores, move_scores + all_moves.moves_count,
-                                 [](const auto &a, const auto &b)
-                                 {
-                                     if (a.second != b.second)
-                                         return a.second > b.second;
-                                     return a.first < b.first;
-                                 });
+                for (int i = 1; i < all_moves.moves_count; i++)
+                {
+                    auto key = move_scores[i];
+                    int j = i - 1;
+                    while (j >= 0 && (move_scores[j].second > key.second ||
+                                      (move_scores[j].second == key.second && move_scores[j].first > key.first)))
+                    {
+                        move_scores[j + 1] = move_scores[j];
+                        j--;
+                    }
+                    move_scores[j + 1] = key;
+                }
             }
 
             int iteration_alpha = prev_alpha - 56;
@@ -3155,13 +3160,18 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
             if (current_depth > 2)
             {
-                std::stable_sort(move_scores, move_scores + all_moves.moves_count,
-                                 [](const auto &a, const auto &b)
-                                 {
-                                     if (a.second != b.second)
-                                         return a.second < b.second;
-                                     return a.first < b.first;
-                                 });
+                for (int i = 1; i < all_moves.moves_count; i++)
+                {
+                    auto key = move_scores[i];
+                    int j = i - 1;
+                    while (j >= 0 && (move_scores[j].second > key.second ||
+                                      (move_scores[j].second == key.second && move_scores[j].first > key.first)))
+                    {
+                        move_scores[j + 1] = move_scores[j];
+                        j--;
+                    }
+                    move_scores[j + 1] = key;
+                }
             }
 
             int iteration_beta = prev_beta + 56;
