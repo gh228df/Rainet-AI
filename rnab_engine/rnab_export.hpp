@@ -14,6 +14,7 @@ extern "C"
     {
         uint64_t player_first_card_mask;
         uint64_t player_second_card_mask;
+        uint64_t link_card_mask;
         int32_t player_first_boosted_cell;
         int32_t player_second_boosted_cell;
         int32_t player_first_firewalled_cell;
