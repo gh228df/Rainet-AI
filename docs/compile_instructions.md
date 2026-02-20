@@ -57,4 +57,21 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
 cmake --build build
 ```
 
+### Linux ARM64 crosscompile on x86-64
+
+```
+sudo apt update
+sudo apt install -y qemu-user-static binfmt-support # ensure we got qemu installed
+
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+sudo docker run --rm --platform linux/arm64 \
+  -v $(pwd):/src -w /src \
+  arm64v8/alpine:latest sh -c '
+    apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers &&
+    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON &&
+    cmake --build build
+  '
+```
+
 (rnab_export.hpp contains exported functions)
