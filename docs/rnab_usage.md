@@ -44,6 +44,7 @@ struct generic_representation {
     int32_t player_second_is_404_not_found_available;
 };
 ```
+(72 bytes in total)
 
 ### Position Encoding
 
