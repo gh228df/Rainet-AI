@@ -1,142 +1,105 @@
-set(CMAKE_C_COMPILER   "clang"   CACHE STRING "C compiler" FORCE)
-set(CMAKE_CXX_COMPILER "clang++" CACHE STRING "C++ compiler" FORCE)
-
 cmake_minimum_required(VERSION 3.14...3.24)
 project(RNAB LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ─────────────────────────────────────────────
 # Options
 # ─────────────────────────────────────────────
 
-option(RNAB_DEBUG    "Enable RNAB debug mode"                ON)
-option(ENABLE_STRIP  "Strip symbols from binary (-s)"        ON)
+option(RNAB_DEBUG    "Enable RNAB debug mode"                        OFF)
+option(ENABLE_STRIP  "Strip symbols from binary (-s)"                ON)
 option(BUILD_LIBRARY "Build as shared library instead of executable" OFF)
 
-if(WIN32)
-    option(BUILD_STATIC "Build static executable (Windows only)" ON)
-    message(STATUS "Windows detected -> static build option available (default ON)")
-else()
-    set(BUILD_STATIC OFF CACHE BOOL "Static build (disabled on non-Windows)" FORCE)
-    message(STATUS "Non-Windows platform -> forcing dynamic build (BUILD_STATIC=OFF)")
+# Android always builds as library
+if(ANDROID)
+    set(BUILD_LIBRARY ON CACHE BOOL "Android always builds as library" FORCE)
+    message(STATUS "Android target -> forcing BUILD_LIBRARY=ON")
 endif()
 
 # ─────────────────────────────────────────────
-# Global compile options
+# Dependencies
 # ─────────────────────────────────────────────
 
-add_compile_options(-O3 -flto)
+include(FetchContent)
+
+FetchContent_Declare(
+    boost_unordered
+    GIT_REPOSITORY https://github.com/MikePopoloski/boost_unordered.git
+    GIT_SHALLOW    TRUE
+    # No GIT_TAG: always fetches the latest commit on the default branch.
+    # Pin to a tag (e.g. GIT_TAG v1.88.0) if you need reproducible builds.
+)
+
+FetchContent_MakeAvailable(boost_unordered)
 
 # ─────────────────────────────────────────────
-# Static build flags (Windows only, for executable)
+# Detect architecture
 # ─────────────────────────────────────────────
 
-if(BUILD_STATIC AND NOT BUILD_LIBRARY)
-    set(BUILD_SHARED_LIBS OFF)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")  # prefer .a over .dll/.so
-    add_link_options(
-        -static
-        -static-libgcc
-        -static-libstdc++
-    )
-    message(STATUS "Static linking enabled for executable")
-endif()
-
-# ─────────────────────────────────────────────
-# Detect architecture family
-# ─────────────────────────────────────────────
-
-string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" PROC_LOWER)
-
-if(PROC_LOWER MATCHES "x86_64|amd64|i[3-9]86|i686|x86|i386")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _proc)
+if(_proc MATCHES "x86_64|amd64|i[3-9]86|i686|x86|i386")
     set(IS_X86 TRUE)
-    message(STATUS "Building for x86-family -> including SIMD variants")
+    message(STATUS "x86 architecture -> SIMD variants will be built")
 else()
     set(IS_X86 FALSE)
     message(STATUS "Non-x86 architecture (${CMAKE_SYSTEM_PROCESSOR}) -> scalar only")
 endif()
 
 # ─────────────────────────────────────────────
-# Helper to apply common per-target definitions
+# Helper: options shared across all object libs
 # ─────────────────────────────────────────────
 
-function(apply_common_options target)
+function(configure_object_lib target)
+    target_include_directories(${target} PRIVATE
+        ${boost_unordered_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_compile_features(${target} PRIVATE cxx_std_20)
+    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     if(RNAB_DEBUG)
         target_compile_definitions(${target} PRIVATE RNAB_DEBUG)
     endif()
 endfunction()
 
 # ─────────────────────────────────────────────
-# Common source files
-# ─────────────────────────────────────────────
-
-if(BUILD_LIBRARY)
-    set(COMMON_SOURCES rnab_engine/rnab.hpp)
-    message(STATUS "Building as library -> using rnab.hpp as dispatcher source")
-else()
-    set(COMMON_SOURCES simple_gui/rnab_main.cpp)
-    message(STATUS "Building as executable -> using rnab_main.cpp")
-endif()
-
-set(HEADER_AS_SOURCE rnab_engine/rnab_impl.hpp)
-set_source_files_properties(${HEADER_AS_SOURCE} ${COMMON_SOURCES} PROPERTIES LANGUAGE CXX)
-
-# ─────────────────────────────────────────────
 # SIMD object libraries
 # ─────────────────────────────────────────────
 
-add_library(rnab_scalar OBJECT ${HEADER_AS_SOURCE})
+set(IMPL_HEADER rnab_engine/rnab_impl.hpp)
+set_source_files_properties(${IMPL_HEADER} PROPERTIES LANGUAGE CXX)
+
+add_library(rnab_scalar OBJECT ${IMPL_HEADER})
 target_compile_definitions(rnab_scalar PRIVATE TU_COMPILE SIMD_SUFFIX=scalar)
-apply_common_options(rnab_scalar)
-set_target_properties(rnab_scalar PROPERTIES POSITION_INDEPENDENT_CODE ON)
+configure_object_lib(rnab_scalar)
 
 if(IS_X86)
-    add_library(rnab_sse42 OBJECT ${HEADER_AS_SOURCE})
-    target_compile_options(rnab_sse42 PRIVATE -msse4.2)
-    target_compile_definitions(rnab_sse42 PRIVATE TU_COMPILE SIMD_SUFFIX=sse4_2)
-    apply_common_options(rnab_sse42)
-    set_target_properties(rnab_sse42 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    foreach(variant IN ITEMS
+            "sse42;-msse4.2;sse4_2"
+            "avx;-mavx;avx"
+            "avx2;-mavx2 -mfma;avx2"
+            "avx512;-mavx512f -mavx512vl -mavx512bw -mavx512dq;avx512f")
 
-    add_library(rnab_avx OBJECT ${HEADER_AS_SOURCE})
-    target_compile_options(rnab_avx PRIVATE -mavx)
-    target_compile_definitions(rnab_avx PRIVATE TU_COMPILE SIMD_SUFFIX=avx)
-    apply_common_options(rnab_avx)
-    set_target_properties(rnab_avx PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        list(GET variant 0 name)
+        list(GET variant 1 flags)
+        list(GET variant 2 suffix)
 
-    add_library(rnab_avx2 OBJECT ${HEADER_AS_SOURCE})
-    target_compile_options(rnab_avx2 PRIVATE -mavx2 -mfma)
-    target_compile_definitions(rnab_avx2 PRIVATE TU_COMPILE SIMD_SUFFIX=avx2)
-    apply_common_options(rnab_avx2)
-    set_target_properties(rnab_avx2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-    add_library(rnab_avx512 OBJECT ${HEADER_AS_SOURCE})
-    target_compile_options(rnab_avx512 PRIVATE -mavx512f -mavx512vl -mavx512bw -mavx512dq)
-    target_compile_definitions(rnab_avx512 PRIVATE TU_COMPILE SIMD_SUFFIX=avx512f)
-    apply_common_options(rnab_avx512)
-    set_target_properties(rnab_avx512 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        add_library(rnab_${name} OBJECT ${IMPL_HEADER})
+        separate_arguments(flag_list UNIX_COMMAND "${flags}")
+        target_compile_options(rnab_${name} PRIVATE ${flag_list})
+        target_compile_definitions(rnab_${name} PRIVATE TU_COMPILE SIMD_SUFFIX=${suffix})
+        configure_object_lib(rnab_${name})
+    endforeach()
 endif()
 
 # ─────────────────────────────────────────────
-# Main target (executable or library)
+# Collect all object libraries
 # ─────────────────────────────────────────────
 
-if(BUILD_LIBRARY)
-    add_library(rnab SHARED
-        ${COMMON_SOURCES}
-        $<TARGET_OBJECTS:rnab_scalar>
-    )
-    message(STATUS "Building shared library: librnab.so (or .dll on Windows)")
-else()
-    add_executable(rnab
-        ${COMMON_SOURCES}
-        $<TARGET_OBJECTS:rnab_scalar>
-    )
-    message(STATUS "Building executable: rnab")
-endif()
-
+set(ALL_OBJECTS $<TARGET_OBJECTS:rnab_scalar>)
 if(IS_X86)
-    target_sources(rnab PRIVATE
+    list(APPEND ALL_OBJECTS
         $<TARGET_OBJECTS:rnab_sse42>
         $<TARGET_OBJECTS:rnab_avx>
         $<TARGET_OBJECTS:rnab_avx2>
@@ -144,57 +107,75 @@ if(IS_X86)
     )
 endif()
 
-target_include_directories(rnab PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-apply_common_options(rnab)
-
 # ─────────────────────────────────────────────
-# Platform-specific libraries (executable only)
+# Main target
 # ─────────────────────────────────────────────
 
-if(NOT BUILD_LIBRARY)
-    if(WIN32)
-        target_link_libraries(rnab PRIVATE
-            glfw3
-            zstd
-            opengl32
-            gdi32
-            pthread
-        )
-    else()
-        target_link_libraries(rnab PRIVATE
-            GL
-            glfw
-            zstd
-        )
-    endif()
+if(BUILD_LIBRARY)
+    set(MAIN_SOURCE rnab_engine/rnab.hpp)
+    set_source_files_properties(${MAIN_SOURCE} PROPERTIES LANGUAGE CXX)
+    add_library(rnab SHARED ${MAIN_SOURCE} ${ALL_OBJECTS})
+    message(STATUS "Building shared library (statically linked runtime)")
 else()
-    if(WIN32)
-        target_link_libraries(rnab PRIVATE
-            pthread
-        )
-    endif()
+    set(MAIN_SOURCE simple_gui/rnab_main.cpp)
+    add_executable(rnab ${MAIN_SOURCE} ${ALL_OBJECTS})
+    message(STATUS "Building executable")
+endif()
+
+target_include_directories(rnab PRIVATE
+    ${boost_unordered_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(rnab PRIVATE cxx_std_20)
+target_compile_options(rnab PRIVATE -O3)
+
+if(RNAB_DEBUG)
+    target_compile_definitions(rnab PRIVATE RNAB_DEBUG)
 endif()
 
 # ─────────────────────────────────────────────
-# Link-time options + ALWAYS static for library
+# Link options
 # ─────────────────────────────────────────────
 
 target_link_options(rnab PRIVATE -fuse-ld=lld -flto)
 
-# ALWAYS compile the library statically (runtime + full static linking)
-# regardless of OS, BUILD_STATIC, or any other parameter.
-if(BUILD_LIBRARY)
-    target_link_options(rnab PRIVATE
-        -static
-        -static-libstdc++
-        -static-libgcc
-    )
-    message(STATUS "Shared library: FULL static runtime (libstdc++ + libgcc + -static) embedded (any OS)")
+# Static linking rules per platform:
+#   Windows  -> always fully static (library or executable)
+#   Android  -> only embed libstdc++/libgcc, leave libc/libm/libdl dynamic
+#   Linux    -> static only for library; executable links dynamically
+if(WIN32)
+    target_link_options(rnab PRIVATE -static -static-libstdc++ -static-libgcc)
+    message(STATUS "Static linking: full (Windows)")
+elseif(ANDROID)
+    target_link_options(rnab PRIVATE -static-libstdc++ -static-libgcc)
+    message(STATUS "Static linking: libstdc++/libgcc only (Android)")
+else() # Linux
+    if(BUILD_LIBRARY)
+        target_link_options(rnab PRIVATE -static -static-libstdc++ -static-libgcc)
+        message(STATUS "Static linking: full (Linux library)")
+    else()
+        message(STATUS "Static linking: none (Linux executable)")
+    endif()
 endif()
 
 if(ENABLE_STRIP)
     target_link_options(rnab PRIVATE -s)
-    message(STATUS "Symbol stripping enabled (-s)")
+endif()
+
+# ─────────────────────────────────────────────
+# Platform libraries (executable only)
+# ─────────────────────────────────────────────
+
+if(WIN32)
+    target_link_libraries(rnab PRIVATE pthread)
+endif()
+
+if(NOT BUILD_LIBRARY)
+    if(WIN32)
+        target_link_libraries(rnab PRIVATE glfw3 zstd opengl32 gdi32)
+    else()
+        target_link_libraries(rnab PRIVATE GL glfw zstd)
+    endif()
 endif()
 
 # ─────────────────────────────────────────────
@@ -202,8 +183,7 @@ endif()
 # ─────────────────────────────────────────────
 
 message(STATUS "Compiler:      ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "Linker flag:   -fuse-ld=lld")
 message(STATUS "BUILD_LIBRARY: ${BUILD_LIBRARY}")
-message(STATUS "BUILD_STATIC:  ${BUILD_STATIC}")
 message(STATUS "RNAB_DEBUG:    ${RNAB_DEBUG}")
 message(STATUS "ENABLE_STRIP:  ${ENABLE_STRIP}")
+message(STATUS "IS_X86:        ${IS_X86}")
