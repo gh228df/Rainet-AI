@@ -74,53 +74,53 @@ generic_representation intern_to_generic_representation(field_t pos)
 
     temp = pos.is_fir_mask & pos.is_link_mask;
 
-    res.player_first_link_1_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_link_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_link_2_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_link_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_link_3_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_link_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_link_4_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_link_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
 
     temp = pos.is_fir_mask & (~pos.is_link_mask);
 
-    res.player_first_virus_1_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_virus_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_virus_2_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_virus_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_virus_3_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_virus_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_first_virus_4_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_first_virus_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
 
     temp = pos.is_sec_mask & pos.is_link_mask;
 
-    res.player_second_link_1_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_link_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_link_2_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_link_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_link_3_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_link_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_link_4_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_link_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
 
     temp = pos.is_sec_mask & (~pos.is_link_mask);
 
-    res.player_second_virus_1_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_virus_1_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_virus_2_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_virus_2_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_virus_3_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_virus_3_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
-    res.player_second_virus_4_pos = (temp) ? (__builtin_ctzll(temp)) : -1;
+    res.player_second_virus_4_pos = ((temp) ? (__builtin_ctzll(temp)) : -1);
     temp &= (temp - 1);
 
-    res.player_first_boosted_cell = (pos.is_fir_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_fir_mask & pos.is_boosted_mask)) : -1;
-    res.player_second_boosted_cell = (pos.is_sec_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_sec_mask & pos.is_boosted_mask)) : -1;
+    res.player_first_boosted_cell = ((pos.is_fir_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_fir_mask & pos.is_boosted_mask)) : -1);
+    res.player_second_boosted_cell = ((pos.is_sec_mask & pos.is_boosted_mask) ? (__builtin_ctzll(pos.is_sec_mask & pos.is_boosted_mask)) : -1);
 
-    res.player_first_firewalled_cell = pos.firewall_fir;
-    res.player_second_firewalled_cell = pos.firewall_sec;
+    res.player_first_firewalled_cell = ((pos.is_firewall_available_fir) ? -1 : pos.firewall_fir);
+    res.player_second_firewalled_cell = ((pos.is_firewall_available_sec) ? -1 : pos.firewall_sec);
 
     res.player_first_captured_links_num = pos.fir_link;
     res.player_first_captured_viruses_num = pos.fir_virus;
@@ -128,11 +128,11 @@ generic_representation intern_to_generic_representation(field_t pos)
     res.player_second_captured_links_num = pos.sec_link;
     res.player_second_captured_viruses_num = pos.sec_virus;
 
-    res.player_first_is_virus_checker_available = (pos.is_checker_available_fir == 1) ? 1 : 0;
-    res.player_second_is_virus_checker_available = (pos.is_checker_available_sec == 1) ? 1 : 0;
+    res.player_first_is_virus_checker_available = ((pos.is_checker_available_fir == 1) ? 1 : 0);
+    res.player_second_is_virus_checker_available = ((pos.is_checker_available_sec == 1) ? 1 : 0);
 
-    res.player_first_is_404_not_found_available = (pos.is_swap_available_fir == 1) ? 1 : 0;
-    res.player_second_is_404_not_found_available = (pos.is_swap_available_sec == 1) ? 1 : 0;
+    res.player_first_is_404_not_found_available = ((pos.is_swap_available_fir == 1) ? 1 : 0);
+    res.player_second_is_404_not_found_available = ((pos.is_swap_available_sec == 1) ? 1 : 0);
 
     return res;
 }
@@ -160,23 +160,31 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
 #define IS_ARG_LEGIT(arg_var) \
     assert((arg_var == -1 || (arg_var >= 0 && arg_var <= 63)) && "Illegal argument (" #arg_var ")")
 
-#define PLACE_AND_CHECK_VIRUS(virus_var, player_mask_var)                                                      \
+#define PLACE_AND_CHECK_VIRUS(virus_var, player_mask_var, is_adv_rev)                                          \
     if (virus_var >= 0 && virus_var <= 63)                                                                     \
     {                                                                                                          \
         const uint64_t cur_mask = 1ULL << virus_var;                                                           \
                                                                                                                \
         assert((player_mask_var & cur_mask) == 0 && "Cards may not be on top of each other (" #virus_var ")"); \
                                                                                                                \
+        if (is_adv_rev)                                                                                        \
+            position.forward_adv_fir += 7 - (virus_var >> 3);                                                  \
+        else                                                                                                   \
+            position.forward_adv_sec += (virus_var >> 3);                                                      \
         player_mask_var |= cur_mask;                                                                           \
     }
 
-#define PLACE_AND_CHECK_LINK(link_var, player_mask_var, link_mask)                                                                           \
+#define PLACE_AND_CHECK_LINK(link_var, player_mask_var, link_mask, is_adv_rev)                                                               \
     if (link_var >= 0 && link_var <= 63)                                                                                                     \
     {                                                                                                                                        \
         const uint64_t cur_mask = 1ULL << link_var;                                                                                          \
                                                                                                                                              \
         assert((player_mask_var & cur_mask) == 0 && (link_mask & cur_mask) == 0 && "Cards may not be on top of each other (" #link_var ")"); \
                                                                                                                                              \
+        if (is_adv_rev)                                                                                                                      \
+            position.forward_adv_fir += 7 - (link_var >> 3);                                                                                 \
+        else                                                                                                                                 \
+            position.forward_adv_sec += (link_var >> 3);                                                                                     \
         player_mask_var |= cur_mask;                                                                                                         \
         link_mask |= cur_mask;                                                                                                               \
     }
@@ -213,33 +221,35 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
     position.is_fir_mask = 0;
     position.is_boosted_mask = 0;
 
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_1_pos, position.is_fir_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_2_pos, position.is_fir_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_3_pos, position.is_fir_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_first_link_4_pos, position.is_fir_mask, position.is_link_mask);
+    position.firewall_fir = 0;
+    position.firewall_sec = 0;
 
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_1_pos, position.is_fir_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_2_pos, position.is_fir_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_3_pos, position.is_fir_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_4_pos, position.is_fir_mask);
+    PLACE_AND_CHECK_LINK(game_state->player_first_link_1_pos, position.is_fir_mask, position.is_link_mask, true);
+    PLACE_AND_CHECK_LINK(game_state->player_first_link_2_pos, position.is_fir_mask, position.is_link_mask, true);
+    PLACE_AND_CHECK_LINK(game_state->player_first_link_3_pos, position.is_fir_mask, position.is_link_mask, true);
+    PLACE_AND_CHECK_LINK(game_state->player_first_link_4_pos, position.is_fir_mask, position.is_link_mask, true);
 
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_1_pos, position.is_sec_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_2_pos, position.is_sec_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_3_pos, position.is_sec_mask, position.is_link_mask);
-    PLACE_AND_CHECK_LINK(game_state->player_second_link_4_pos, position.is_sec_mask, position.is_link_mask);
+    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_1_pos, position.is_fir_mask, true);
+    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_2_pos, position.is_fir_mask, true);
+    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_3_pos, position.is_fir_mask, true);
+    PLACE_AND_CHECK_VIRUS(game_state->player_first_virus_4_pos, position.is_fir_mask, true);
 
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_1_pos, position.is_sec_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_2_pos, position.is_sec_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_3_pos, position.is_sec_mask);
-    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_4_pos, position.is_sec_mask);
+    PLACE_AND_CHECK_LINK(game_state->player_second_link_1_pos, position.is_sec_mask, position.is_link_mask, false);
+    PLACE_AND_CHECK_LINK(game_state->player_second_link_2_pos, position.is_sec_mask, position.is_link_mask, false);
+    PLACE_AND_CHECK_LINK(game_state->player_second_link_3_pos, position.is_sec_mask, position.is_link_mask, false);
+    PLACE_AND_CHECK_LINK(game_state->player_second_link_4_pos, position.is_sec_mask, position.is_link_mask, false);
+
+    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_1_pos, position.is_sec_mask, false);
+    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_2_pos, position.is_sec_mask, false);
+    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_3_pos, position.is_sec_mask, false);
+    PLACE_AND_CHECK_VIRUS(game_state->player_second_virus_4_pos, position.is_sec_mask, false);
 
     assert((position.is_fir_mask & position.is_sec_mask) == 0 && "Player one cards may not be on top of player two cards");
 
-    assert((position.is_fir_mask & (1ULL << game_state->player_first_boosted_cell)) && "Boost must be on top of a card (player_first_boosted_cell)");
-    assert((position.is_sec_mask & (1ULL << game_state->player_second_boosted_cell)) && "Boost must be on top of a card (player_second_boosted_cell)");
-
     if (game_state->player_first_boosted_cell >= 0 && game_state->player_first_boosted_cell <= 63)
     {
+        assert((position.is_fir_mask & (1ULL << game_state->player_first_boosted_cell)) && "Boost must be on top of a card (player_first_boosted_cell)");
+
         position.is_boosted_mask |= (1ULL << game_state->player_first_boosted_cell);
         position.is_boost_available_fir = 0;
     }
@@ -250,6 +260,8 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
 
     if (game_state->player_second_boosted_cell >= 0 && game_state->player_second_boosted_cell <= 63)
     {
+        assert((position.is_sec_mask & (1ULL << game_state->player_second_boosted_cell)) && "Boost must be on top of a card (player_second_boosted_cell)");
+
         position.is_boosted_mask |= (1ULL << game_state->player_second_boosted_cell);
         position.is_boost_available_sec = 0;
     }
@@ -311,8 +323,14 @@ extern "C" EXPORT_API generic_representation rnab_compute_best_move(int32_t max_
     position.sec_link = game_state->player_second_captured_links_num;
     position.sec_virus = game_state->player_second_captured_viruses_num;
 
+    // position.print_field();
+
+    minimax_main_result_t res = minimax_iteration_main(max_depth, max_search_time, MIN, MAX, player, &position);
+
+    // res.best_field.print_field();
+
 #undef IS_ARG_LEGIT
 #undef PLACE_AND_CHECK_VIRUS
 #undef PLACE_AND_CHECK_LINK
-    return intern_to_generic_representation(minimax_iteration_main(max_depth, max_search_time, MAX, MIN, player, &position).best_field);
+    return intern_to_generic_representation(res.best_field);
 }
