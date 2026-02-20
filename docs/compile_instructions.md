@@ -39,6 +39,8 @@ cmake --build build
 
 The easiest and most reliable way to get a maximally compatible binary is to build inside an **Alpine Linux** container.
 
+### Linux x86-64
+
 ```
 docker run -it --rm -v $(pwd):/src -w /src alpine:latest sh
 apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers
@@ -46,6 +48,13 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
 cmake --build build
 ```
 
+### Linux x86
 
+```
+docker run -it --rm -v $(pwd):/src -w /src i386/alpine:latest sh
+apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
+cmake --build build
+```
 
 (rnab_export.hpp contains exported functions)
