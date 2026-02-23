@@ -55,10 +55,14 @@ static inline void decode(uint32_t *out_pixel_data, uint8_t *encoded_image, int 
 
             last_pointer_color = cur_pointer_color;
             int mask = (*(encoded_image++)) >> 4;
+
+            uint32_t encoded_data;
+            memcpy(&encoded_data, encoded_image, 4);
+
             cur_pointer_color =
                 (cur_pointer_color & decode_table[mask].mask_comb) |
-                ((((*(uint32_t *)encoded_image) << decode_table[mask].shift1) & decode_table[mask].mask1) |
-                 (((*(uint32_t *)encoded_image) << decode_table[mask].shift2) & decode_table[mask].mask2));
+                (((encoded_data << decode_table[mask].shift1) & decode_table[mask].mask1) |
+                 ((encoded_data << decode_table[mask].shift2) & decode_table[mask].mask2));
             encoded_image += __builtin_popcount(mask);
             *(out_pixel_data++) = cur_pointer_color;
         }
@@ -90,7 +94,10 @@ static inline void decode(uint32_t *out_pixel_data, uint8_t *encoded_image, int 
         }
         else
         {
-            uint32_t repeat_var = (*(uint32_t *)encoded_image) >> 2;
+            uint32_t repeat_var;
+            memcpy(&repeat_var, encoded_image, 4); // fix unaligned loads
+            repeat_var >>= 2;
+
             uint32_t move_coef = ((instr >> 2) & 2); // either 2 or 0
             uint32_t mask = (move_coef != 0) ? 1073741823 : 16383;
 
@@ -832,14 +839,14 @@ void init(const char *win_name)
         compressed_ptr += 8;
 
         unsigned long long raw_size = ZSTD_getFrameContentSize(compressed_ptr, compressed_size);
-        char *decompressed = (char *)malloc(raw_size);
+        char *decompressed = (char *)calloc(raw_size + 256, 1);
         if (decompressed == NULL)
         {
             fprintf(stderr, "OOM\n");
             exit(1);
         }
 
-        size_t decompressed_size = ZSTD_decompress(decompressed, raw_size, compressed_ptr, compressed_size);
+        ZSTD_decompress(decompressed, raw_size + 256, compressed_ptr, compressed_size);
 
         decode(layer_data, (uint8_t *)decompressed, TEXTURE_ARRAY_DIM);
 
@@ -1198,9 +1205,6 @@ void render_button_text_9_slice(struct button_t *self)
     if (self->visible == false || self->a == 0)
         return;
 
-    int side_length = self->padding_top + self->padding_bottom + self->height;
-    int top_side_length = self->padding_left + self->padding_right + self->width;
-
     texture_t *tl = self->button_9_slice_text.top_left;
     texture_t *t = self->button_9_slice_text.top;
     texture_t *tr = self->button_9_slice_text.top_right;
@@ -1305,9 +1309,6 @@ void render_button_image_9_slice(struct button_t *self)
 {
     if (self->visible == false || self->a == 0)
         return;
-
-    int side_length = self->padding_top + self->padding_bottom + self->height;
-    int top_side_length = self->padding_left + self->padding_right + self->width;
 
     texture_t *tl = self->button_9_slice_image.top_left;
     texture_t *t = self->button_9_slice_image.top;
