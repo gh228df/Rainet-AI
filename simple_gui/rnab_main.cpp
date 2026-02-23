@@ -5,11 +5,14 @@
 #define M_PI 3.14159265358979323846
 
 #define HIDE_ENEMY_CARDS false
-#define MAX_SEARCH_TIME 4000 // 4 seconds
+#define MAX_SEARCH_TIME 100000 // 10 seconds
 
 GLFWwindow *window;
 
 field_t pos;
+
+bool is_boost_available_fir;
+bool is_boost_available_sec;
 
 void render_game_field(field_t &position, bool cover_enemy_cards, uint64_t enemy_reveal_mask, uint64_t ally_reveal_mask, uint8_t taken_first_links, uint8_t taken_first_viruses, uint8_t taken_second_links, uint8_t taken_second_viruses)
 {
@@ -52,10 +55,10 @@ void render_game_field(field_t &position, bool cover_enemy_cards, uint64_t enemy
             render_tex(&link_enemy, 54 * (i + 4), 54 * 11, 255, 255, 255, 255, 0);
     }
 
-    if (position.is_boost_available_fir)
+    if (is_boost_available_fir)
         render_tex(&boost_enemy, 54 * 6, 54 * 1, 255, 255, 255, 255, 0);
 
-    if (position.is_boost_available_sec)
+    if (is_boost_available_sec)
         render_tex(&boost_ally, 54 * 6, 54 * 10, 255, 255, 255, 255, 0);
 
     if (position.is_swap_available_fir)
@@ -226,22 +229,22 @@ void render_game_field(field_t &position, bool cover_enemy_cards, uint64_t enemy
 
     // render with enemy color for clarity
 
-    if (position.is_firewall_available_fir)
+    if (position.firewall_fir == 0)
     {
         render_tex(&firewall_enemy, 54 * 5, 54 * 1, 255, 255, 255, 255, 0);
     }
     else
     {
-        render_tex(&firewall_vis_ally, (7 - (int)(position.firewall_fir & 7)) * 54, (9 - (int)(position.firewall_fir >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_ally, (7 - (int)((position.firewall_fir >> 1) & 7)) * 54, (9 - (int)((position.firewall_fir >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 
-    if (position.is_firewall_available_sec)
+    if (position.firewall_sec == 0)
     {
         render_tex(&firewall_ally, 54 * 5, 54 * 10, 255, 255, 255, 255, 0);
     }
     else
     {
-        render_tex(&firewall_vis_enemy, (7 - (int)(position.firewall_sec & 7)) * 54, (9 - (int)(position.firewall_sec >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_enemy, (7 - (int)((position.firewall_sec >> 1) & 7)) * 54, (9 - (int)((position.firewall_sec >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 }
 
@@ -528,7 +531,6 @@ void decal_move_callback(struct button_t *self)
 
         if (pos.is_boosted_mask & move_dest)
         {
-            pos.is_boost_available_fir = 1;
             pos.is_boosted_mask &= ~move_dest;
         }
     }
@@ -583,11 +585,6 @@ void decal_depo_callback(struct button_t *self)
     {
         taken_second_viruses |= (1 << pos.sec_virus);
         ++pos.sec_virus;
-    }
-
-    if (pos.is_boosted_mask & interacting_card)
-    {
-        pos.is_boost_available_sec = 1;
     }
 
     if (pos.is_boosted_mask & interacting_card)
@@ -662,7 +659,7 @@ void card_move_p1(struct button_t *self)
 
     debug_printf("clicked on card at x=%d y=%d\n", piece_x, piece_y);
 
-    const uint64_t enemy_firewall_mask = ((pos.is_firewall_available_fir) ? 0 : (1ULL << pos.firewall_fir));
+    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.firewall_fir & 1) << (pos.firewall_fir >> 1));
     const uint64_t all_cards_mask = pos.is_sec_mask | pos.is_fir_mask | enemy_firewall_mask;
     const uint64_t unmoveable_mask = pos.is_sec_mask | enemy_firewall_mask;
 
@@ -786,8 +783,6 @@ void boost_card(struct button_t *self)
 {
     debug_printf("called boost_card\n");
 
-    pos.is_boost_available_sec = 0;
-
     old_state = pos;
 
     surface->on_click = NULL;
@@ -800,6 +795,7 @@ void boost_card(struct button_t *self)
 
     last_time_appear = current_time;
 
+    is_boost_available_sec = false;
     state = GAME_STATE_PLAYER_BOOST_ANIM;
 }
 
@@ -1144,8 +1140,7 @@ void place_firewall(struct button_t *self)
 
     const int firewall_pos = ((7 - (self->x / 54)) + 8 * (9 - (self->y / 54)));
 
-    pos.is_firewall_available_sec = 0;
-    pos.firewall_sec = firewall_pos;
+    pos.firewall_sec = (firewall_pos << 1) | 1;
 
     for (int i = 0; i < decals_size; ++i)
         decals[i]->on_click = NULL;
@@ -1170,7 +1165,7 @@ void firewall_p1(struct button_t *self)
         controls[i]->on_click = NULL;
     surface->on_click = cancel_firewall;
 
-    const uint64_t enemy_firewall_mask = ((pos.is_firewall_available_fir) ? 0 : (1ULL << pos.firewall_fir));
+    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.firewall_fir & 1) << (pos.firewall_fir >> 1));
     const uint64_t unmoveable_mask = pos.is_fir_mask | enemy_firewall_mask; // apparently you can place firewall on top of your cards so dont include 'pos.is_sec_mask'
 
     for (int i = 0; i < 64; ++i)
@@ -1214,7 +1209,6 @@ void perform_unfirewall(struct button_t *self)
     surface->on_click = NULL;
 
     pos.firewall_sec = 0;
-    pos.is_firewall_available_sec = 1;
 
     state = GAME_STATE_AI_IDLE;
 
@@ -1233,8 +1227,8 @@ void unfirewall_p1(struct button_t *self)
         controls[i]->on_click = NULL;
     surface->on_click = cancel_unfirewall;
 
-    controls[4]->x = ((7 - (int)(pos.firewall_sec & 7)) * 54);
-    controls[4]->y = ((9 - (int)(pos.firewall_sec >> 3)) * 54);
+    controls[4]->x = ((7 - (int)((pos.firewall_sec >> 1) & 7)) * 54);
+    controls[4]->y = ((9 - (int)((pos.firewall_sec >> 1) >> 3)) * 54);
     controls[4]->on_click = perform_unfirewall;
 }
 
@@ -1252,11 +1246,11 @@ void add_card_controls()
         controls[0]->on_click = checker_p1;
     if (pos.is_swap_available_sec)
         controls[1]->on_click = swap_p1;
-    if (pos.is_firewall_available_sec)
+    if (pos.firewall_sec == 0)
         controls[2]->on_click = firewall_p1;
     else
         controls[2]->on_click = unfirewall_p1;
-    if (pos.is_boost_available_sec)
+    if ((pos.is_boosted_mask & pos.is_sec_mask) == 0)
         controls[3]->on_click = boost_p1;
     else
         controls[3]->on_click = unboost_p1;
@@ -1308,19 +1302,19 @@ void *ai_move_thread(void *args)
     sec_texture_ptr = card_to_texture(move_dest, pos, false);
 
     // now the actual fuckery
-    if (pos.is_firewall_available_fir != new_field.is_firewall_available_fir) // ai swapped a card
+    if (pos.firewall_fir != new_field.firewall_fir) // ai swapped a card
     {
-        if (pos.is_firewall_available_fir) // place
+        if (pos.firewall_fir == 0) // place
         {
             state = GAME_STATE_AI_FIREWALL;
 
-            interacting_card = 1ULL << pos.firewall_fir;
+            interacting_card = 1ULL << (new_field.firewall_fir >> 1);
         }
         else // remove
         {
             state = GAME_STATE_AI_UNFIREWALL;
 
-            interacting_card = 1ULL << pos.firewall_fir;
+            interacting_card = 1ULL << (pos.firewall_fir >> 1);
         }
     }
     else if (pos.is_swap_available_fir != new_field.is_swap_available_fir) // ai swapped a card
@@ -1474,14 +1468,13 @@ void *ai_move_thread(void *args)
     }
     else if (pos.is_boosted_mask != new_field.is_boosted_mask)
     {
-        if (pos.is_boost_available_fir) // ai boosted a card
+        if (new_field.is_boosted_mask & new_field.is_fir_mask) // ai boosted a card
         {
-            old_state.is_boost_available_fir = 0;
             state = GAME_STATE_AI_BOOST;
+            is_boost_available_fir = false;
         }
         else // ai un-boosted a card
         {
-            new_field.is_boost_available_fir = 0;
             state = GAME_STATE_AI_UNBOOST;
         }
     }
@@ -1573,14 +1566,13 @@ void begin_game(struct button_t *self)
     pos.forward_adv_fir = 2;
     pos.forward_adv_sec = 2;
 
-    pos.is_boost_available_fir = 1;
-    pos.is_boost_available_sec = 1;
     pos.is_checker_available_fir = 1;
     pos.is_checker_available_sec = 1;
     pos.is_swap_available_fir = 1;
     pos.is_swap_available_sec = 1;
-    pos.is_firewall_available_fir = 1;
-    pos.is_firewall_available_sec = 1;
+
+    pos.firewall_fir = 0;
+    pos.firewall_sec = 0;
 
     enemy_reveal_mask = 0;
     ally_reveal_mask = 0;
@@ -1590,6 +1582,8 @@ void begin_game(struct button_t *self)
     taken_second_viruses = 0;
     player_field_id = 0;
     player_field_place_id = 0;
+    is_boost_available_fir = true;
+    is_boost_available_sec = true;
 
     last_time_appear = current_time;
 
@@ -1627,11 +1621,10 @@ void begin_game(struct button_t *self)
 }
 
 int main()
-{   
+{
     srand(time(NULL));
 
     init("rnab");
-    rnab_engine_init();
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -1825,7 +1818,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(sec_texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -1840,11 +1832,10 @@ int main()
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(((old_state.sec_link < pos.sec_link) ? (&link_enemy) : (&virus_enemy)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(11 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                if (old_state.is_boost_available_fir == 0 && pos.is_boost_available_fir != 0)
+                if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
                 {
                     render_tex_scale(&boost_enemy, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 }
@@ -1852,6 +1843,9 @@ int main()
                 if ((current_time - last_time_appear) >= 1500000)
                 {
                     last_time_appear = current_time;
+
+                    if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
+                        is_boost_available_fir = true;
 
                     if (pos.sec_link == 4)
                     {
@@ -1891,7 +1885,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
@@ -1906,7 +1899,6 @@ int main()
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
 
@@ -1937,7 +1929,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
@@ -1950,7 +1941,6 @@ int main()
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
 
@@ -1979,7 +1969,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(&not_found_ally, (float)(2 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
@@ -1995,7 +1984,6 @@ int main()
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(&not_found_ally, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(&not_found_ally, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -2015,7 +2003,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(&not_found_ally, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(&not_found_ally, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -2115,7 +2102,6 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(sec_texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -2130,11 +2116,10 @@ int main()
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 render_tex_scale(((old_state.fir_link < pos.fir_link) ? (&link_ally) : (&virus_ally)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(0) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                if (old_state.is_boost_available_sec == 0 && pos.is_boost_available_sec != 0)
+                if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
                 {
                     render_tex_scale(&boost_ally, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 }
@@ -2142,6 +2127,9 @@ int main()
                 if ((current_time - last_time_appear) >= 1500000)
                 {
                     last_time_appear = current_time;
+
+                    if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
+                        is_boost_available_sec = true;
 
                     if (pos.fir_link == 4)
                     {
@@ -2180,20 +2168,16 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
             else if ((current_time - last_time_appear) < 1500000)
             {
-                const int fir_piece_pos = __builtin_ctzll(interacting_card);
-
                 float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
                 if (progress > 1.0f)
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(sec_texture_ptr, 189.0f + (1.0f - eased) * 27.0f, (float)(54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
@@ -2209,7 +2193,7 @@ int main()
                     float eased = 2.0f * progress - progress * progress;
 
                     render_tex_scale(sec_texture_ptr, (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(11 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                    if (old_state.is_boost_available_sec == 0 && pos.is_boost_available_sec != 0)
+                    if ((old_state.is_sec_mask & old_state.is_boosted_mask) != 0 && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
                     {
                         render_tex_scale(&boost_ally, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                     }
@@ -2265,20 +2249,16 @@ int main()
                     progress = 0.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(texture_ptr, (float)((7 - (fir_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (fir_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
             else if ((current_time - last_time_appear) < 1500000)
             {
-                const int fir_piece_pos = __builtin_ctzll(moved_card);
-
                 float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
                 if (progress > 1.0f)
                     progress = 1.0f;
 
                 float eased = 2.0f * progress - progress * progress;
-                float tex_size = 54.0f * eased;
 
                 render_tex_scale(sec_texture_ptr, 189.0F + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
             }
@@ -2294,7 +2274,7 @@ int main()
                     float eased = 2.0f * progress - progress * progress;
 
                     render_tex_scale(sec_texture_ptr, (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(0) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                    if (old_state.is_boost_available_fir == 0 && pos.is_boost_available_fir != 0)
+                    if ((old_state.is_fir_mask & old_state.is_boosted_mask) != 0 && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
                     {
                         render_tex_scale(&boost_enemy, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                     }
@@ -2497,7 +2477,7 @@ int main()
 
                 if ((current_time - last_time_appear) >= 2250000)
                 {
-                    pos.is_boost_available_sec = 1;
+                    is_boost_available_sec = true;
                     state = GAME_STATE_AI_IDLE;
                     ai_move();
                 }
@@ -2516,7 +2496,7 @@ int main()
 
             uint8_t blend_alpha = (uint8_t)(191.0f + 64.0f * cosf(M_PI * 2.0f * ((current_time - last_time_appear) / 1000000.0f)));
 
-            const int card_pos = pos.firewall_sec;
+            const int card_pos = pos.firewall_sec >> 1;
 
             render_tex(&firewall_ally, (7 - (card_pos & 7)) * 54, (9 - (card_pos >> 3)) * 54, blend_alpha, blend_alpha, blend_alpha, 255, 0);
 
@@ -2590,7 +2570,7 @@ int main()
 
                 if ((current_time - last_time_appear) >= 2250000)
                 {
-                    pos.is_boost_available_fir = 1;
+                    is_boost_available_fir = true;
                     state = GAME_STATE_PLAYER_IDLE;
                     add_card_controls();
                 }
