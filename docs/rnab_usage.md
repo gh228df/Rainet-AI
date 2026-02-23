@@ -2,14 +2,6 @@
 
 `rnab_export.hpp` exports the following key functions and data structures.
 
-## Initialization
-
-Call this immediately after loading the library (`.dll` / `.so`):
-
-```cpp
-void rnab_engine_init();
-```
-
 ## Board Representation
 
 The engine uses a flat `generic_representation` structure to describe the game state. This is both the input to move computation and its return type.
@@ -44,7 +36,7 @@ struct generic_representation {
     int32_t player_second_is_404_not_found_available;
 };
 ```
-(72 bytes in total)
+(72 bytes in total, make sure all the types match across the languages and there is exactly 72 bytes at the memory address)
 
 ### Position Encoding
 
