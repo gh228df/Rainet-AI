@@ -489,7 +489,7 @@ inline __attribute__((always_inline)) bool tt_probe(tt_bucket_t *bucket, uint64_
 
 #define CLEAR_TT()                            \
     for (int t_t = 0; t_t < MAX_DEPTH; ++t_t) \
-    SIMD_NAME(cache)                          \
+        SIMD_NAME(cache)                      \
     [t_t].clear()
 
 static boost::unordered_flat_map<field_t, tt_payload_t, field_t> SIMD_NAME(cache)[MAX_DEPTH];
@@ -782,7 +782,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // forward right
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -792,7 +792,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // forward left
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -840,7 +840,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // backwards right
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -850,7 +850,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // backwards left
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -1154,7 +1154,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // forward right
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -1164,7 +1164,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // forward left
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -1212,7 +1212,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // backwards right
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -1222,7 +1222,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // backwards left
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -2066,7 +2066,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // forward right
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -2076,7 +2076,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // forward left
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -2124,7 +2124,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // backwards right
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -2134,7 +2134,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // backwards left
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -2672,7 +2672,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // forward right
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -2682,7 +2682,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // forward left
-            if ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard << 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard <<= 8;
                 if (new_pos_bitboard)
@@ -2730,7 +2730,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 18374403900871474942ULL) >> 1); // backwards right
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
@@ -2740,7 +2740,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
 
             new_pos_bitboard = ((cur_pos_bitboard & 9187201950435737471ULL) << 1); // backwards left
-            if ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv)
+            if (new_pos_bitboard && ((new_pos_bitboard | (cur_pos_bitboard >> 8)) & unmoveable_mask_inv))
             {
                 new_pos_bitboard >>= 8;
                 if (new_pos_bitboard)
