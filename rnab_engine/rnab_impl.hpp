@@ -1,7 +1,13 @@
 #include <time.h>
 #include <stdint.h>
+#include <assert.h>
 #include <stdio.h>
+
+#ifdef BOOST_CACHE_BACKEND
 #include <boost/unordered/unordered_flat_map.hpp>
+#else
+#include <stdatomic.h>
+#endif
 
 const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
 
@@ -43,6 +49,40 @@ const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58,
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
 
+#if defined(THREAD_GUARD) && defined(BOOST_CACHE_BACKEND)
+#error "THREAD_GUARD is not supported with BOOST_CACHE_BACKEND"
+#endif
+
+typedef union
+{
+    uint64_t raw;
+    struct
+    {
+        int32_t eval;
+        uint16_t depth;
+        uint16_t flag;
+    } fields;
+} tt_payload_t;
+
+typedef struct
+{
+#ifdef THREAD_GUARD
+    _Atomic(uint64_t) hash_entry;
+    _Atomic(uint64_t) data;
+#else
+    uint64_t hash_entry;
+    tt_payload_t data;
+#endif
+} tt_entry_t;
+
+static_assert(MAX_DEPTH < UINT16_MAX); // uint16_t limit
+
+typedef struct
+{
+    tt_entry_t depth_preferred;
+    tt_entry_t scratch;
+} tt_bucket_t;
+
 #include "wyhash.h"
 
 struct field_t
@@ -73,6 +113,11 @@ struct field_t
     inline __attribute__((always_inline)) bool operator==(const field_t &other) const
     {
         return __builtin_memcmp(this, &other, sizeof(field_t)) == 0;
+    }
+
+    inline __attribute__((always_inline)) uint64_t hash() const
+    {
+        return wyhash(this, sizeof(field_t), 0, _wyp);
     }
 
     inline __attribute__((always_inline)) size_t operator()(const field_t &s) const
@@ -310,7 +355,7 @@ struct field_t
 
     inline __attribute__((always_inline)) int evaluate() const
     {
-        return ((1024 << fir_link) - (2048 << fir_virus) - (1024 << sec_link) + (2048 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec + 2048 * (int)is_swap_available_fir - 2048 * (int)is_swap_available_sec;
+        return ((1024 << fir_link) - (512 << fir_virus) - (1024 << sec_link) + (512 << sec_virus)) + (int)forward_adv_fir - (int)forward_adv_sec + 2048 * (int)is_swap_available_fir - 2048 * (int)is_swap_available_sec;
     }
 
     void print_field()
@@ -373,22 +418,83 @@ struct minimax_main_result_t
     bool has_timed_out;
 };
 
-struct ttentry_t
-{
-    int score;
-    int flag;
-#ifdef CACHE_DEBUG
-    int cache_id;
-#endif
-};
-
 struct possible_moves_t
 {
     field_t moves[MAX_MOVES];
     int moves_count;
 };
 
+//#define TU_COMPILE
+
 #ifdef TU_COMPILE
+
+#ifndef BOOST_CACHE_BACKEND
+
+#define CLEAR_TT() memset(transposition_table, 0, sizeof(transposition_table))
+
+extern tt_bucket_t transposition_table[TABLE_SIZE];
+
+inline __attribute__((always_inline)) void tt_store(tt_bucket_t *bucket, uint64_t hash, int32_t eval, uint16_t depth, uint16_t flag)
+{
+    tt_payload_t packed{.fields{eval, depth, flag}};
+
+#ifdef THREAD_GUARD
+    tt_entry_t *target = (depth >= atomic_load_explicit((_Atomic tt_payload_t *)&(bucket->depth_preferred.data), memory_order_relaxed).fields.depth) ? &bucket->depth_preferred : &bucket->scratch;
+    atomic_store_explicit(&target->data, packed.raw, memory_order_relaxed);
+    atomic_store_explicit(&target->hash_entry, hash ^ packed.raw, memory_order_release);
+#else
+    tt_entry_t *target = (depth >= bucket->depth_preferred.data.fields.depth) ? &bucket->depth_preferred : &bucket->scratch;
+    target->data = packed;
+    target->hash_entry = hash ^ packed.raw;
+#endif
+}
+
+inline __attribute__((always_inline)) bool tt_probe(tt_bucket_t *bucket, uint64_t hash, tt_payload_t *out)
+{
+    {
+#ifdef THREAD_GUARD
+        uint64_t key = atomic_load_explicit(&bucket->depth_preferred.hash_entry, memory_order_acquire);
+        tt_payload_t data = atomic_load_explicit((_Atomic tt_payload_t *)&(bucket->depth_preferred.data), memory_order_relaxed);
+#else
+        uint64_t key = bucket->depth_preferred.hash_entry;
+        tt_payload_t data = bucket->depth_preferred.data;
+#endif
+
+        if ((key ^ data.raw) == hash)
+        {
+            *out = data;
+            return true;
+        }
+    }
+
+    {
+#ifdef THREAD_GUARD
+        uint64_t key = atomic_load_explicit(&bucket->scratch.hash_entry, memory_order_acquire);
+        tt_payload_t data = atomic_load_explicit((_Atomic tt_payload_t *)&(bucket->scratch.data), memory_order_relaxed);
+#else
+        uint64_t key = bucket->scratch.hash_entry;
+        tt_payload_t data = bucket->scratch.data;
+#endif
+        if ((key ^ data.raw) == hash)
+        {
+            *out = data;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+#else
+
+#define CLEAR_TT()                            \
+    for (int t_t = 0; t_t < MAX_DEPTH; ++t_t) \
+    SIMD_NAME(cache)                          \
+    [t_t].clear()
+
+static boost::unordered_flat_map<field_t, tt_payload_t, field_t> SIMD_NAME(cache)[MAX_DEPTH];
+
+#endif
 
 int SIMD_NAME(cur_search_depth) = 0;
 
@@ -595,7 +701,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
 
         const uint64_t cur_boosted_mask = position->is_boosted_mask & firmask;
         const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_sec & 1) << (position->firewall_sec >> 1);
-        const uint64_t unmoveable_mask = secmask | enemy_firewall_mask;
+        const uint64_t unmoveable_mask = firmask | secmask | enemy_firewall_mask;
 
         if (__builtin_expect(fir_link_mask & 24ULL, 0))
         {
@@ -966,7 +1072,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *position, const bool p
 
         const uint64_t cur_boosted_mask = position->is_boosted_mask & secmask;
         const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_fir & 1) << (position->firewall_fir >> 1);
-        const uint64_t unmoveable_mask = firmask | enemy_firewall_mask;
+        const uint64_t unmoveable_mask = firmask | secmask | enemy_firewall_mask;
 
         if (__builtin_expect(sec_link_mask & 1729382256910270464ULL, 0))
         {
@@ -1734,65 +1840,6 @@ static cutoff_tracker_t SIMD_NAME(cutoff_tracker)[1000] = {0};
 
 #endif
 
-#ifdef CACHE_DEBUG
-
-typedef struct
-{
-    int64_t total_entries;
-    int64_t lookup_entries;
-} cache_tracker_t;
-
-static cache_tracker_t SIMD_NAME(cache_entry_tracker)[1000] = {0};
-
-#define BEGIN_CACHE_TRACKING() \
-    static constexpr int _cache_counter_base = __COUNTER__
-
-#define TRACK_ENTRY_MAX()                                                                   \
-    {                                                                                       \
-        static constexpr int _entry_idx_##__LINE__ = __COUNTER__ - _cache_counter_base - 1; \
-        SIMD_NAME(cache_entry_tracker)                                                      \
-        [_entry_idx_##__LINE__]                                                             \
-            .total_entries++;                                                               \
-        SIMD_NAME(cache)                                                                    \
-        [depth][position] = {alpha, 0, _entry_idx_##__LINE__};                              \
-    }
-
-#define TRACK_ENTRY_MAX_END()                                                               \
-    {                                                                                       \
-        static constexpr int _entry_idx_##__LINE__ = __COUNTER__ - _cache_counter_base - 1; \
-        SIMD_NAME(cache_entry_tracker)                                                      \
-        [_entry_idx_##__LINE__]                                                             \
-            .total_entries++;                                                               \
-        SIMD_NAME(cache)                                                                    \
-        [depth][position] = {alpha, (alpha > alphabeg) ? 3 : 1, _entry_idx_##__LINE__};     \
-    }
-
-#define TRACK_ENTRY_MIN()                                                                   \
-    {                                                                                       \
-        static constexpr int _entry_idx_##__LINE__ = __COUNTER__ - _cache_counter_base - 1; \
-        SIMD_NAME(cache_entry_tracker)                                                      \
-        [_entry_idx_##__LINE__]                                                             \
-            .total_entries++;                                                               \
-        SIMD_NAME(cache)                                                                    \
-        [depth][position] = {beta, 0, _entry_idx_##__LINE__};                               \
-    }
-
-#define TRACK_ENTRY_MIN_END()                                                               \
-    {                                                                                       \
-        static constexpr int _entry_idx_##__LINE__ = __COUNTER__ - _cache_counter_base - 1; \
-        SIMD_NAME(cache_entry_tracker)                                                      \
-        [_entry_idx_##__LINE__]                                                             \
-            .total_entries++;                                                               \
-        SIMD_NAME(cache)                                                                    \
-        [depth][position] = {beta, (beta < betabeg) ? 3 : 1, _entry_idx_##__LINE__};        \
-    }
-
-#define GET_CACHE_COUNT() \
-    (__COUNTER__ - _cache_counter_base - 1)
-
-#else
-
-#define BEGIN_CACHE_TRACKING()
 #define TRACK_ENTRY_MAX()   \
     {                       \
         goto __cache_alpha; \
@@ -1801,35 +1848,15 @@ static cache_tracker_t SIMD_NAME(cache_entry_tracker)[1000] = {0};
     {                      \
         goto __cache_beta; \
     }
-#define TRACK_ENTRY_MAX_END()                                    \
-    {                                                            \
-        SIMD_NAME(cache)                                         \
-        [depth][position] = {alpha, (alpha > alphabeg) ? 3 : 1}; \
-    }
-#define TRACK_ENTRY_MIN_END()                                 \
-    {                                                         \
-        SIMD_NAME(cache)                                      \
-        [depth][position] = {beta, (beta < betabeg) ? 3 : 1}; \
-    }
 
 #define GET_CACHE_COUNT() 0
 
-#endif
-
 BEGIN_BRANCH_TRACKING();
-BEGIN_CACHE_TRACKING();
 
 static int64_t SIMD_NAME(rec_counter) = 0;
 
-static boost::unordered_flat_map<field_t, ttentry_t, field_t> SIMD_NAME(cache)[MAX_DEPTH];
-
-std::vector<field_t> SIMD_NAME(debug_vec);
-
 int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const field_t &__restrict__ position)
 {
-    // assert(position.check_integrity() == true);
-    // SIMD_NAME(debug_vec).push_back(position);
-
 #ifdef BRANCH_DEBUG
     ++SIMD_NAME(rec_counter);
 #endif
@@ -1844,7 +1871,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         const uint64_t cur_boosted_mask = position.is_boosted_mask & firmask;
         const uint64_t enemy_firewall_mask = (uint64_t)(position.firewall_sec & 1) << (position.firewall_sec >> 1);
-        const uint64_t unmoveable_mask = secmask | enemy_firewall_mask;
+        const uint64_t unmoveable_mask = firmask | secmask | enemy_firewall_mask;
 
         if (position.fir_link == 3) // fast path if we are about to win
         {
@@ -1880,35 +1907,41 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
         int alphabeg;
         if (depth > MIN_CACHE_DEPTH)
         {
+#ifdef BOOST_CACHE_BACKEND
             auto it = SIMD_NAME(cache)[depth].find(position);
-            if (it != SIMD_NAME(cache)[depth].end())
-            {
-#ifdef CACHE_DEBUG
-                SIMD_NAME(cache_entry_tracker)
-                [it->second.cache_id]
-                    .lookup_entries++;
-#endif
 
-                ttentry_t entry = it->second;
-                if (__builtin_expect(entry.flag & 1, 0))
+            if (it != SIMD_NAME(cache)[depth].end() && (int)it->second.fields.depth >= depth)
+            {
+                tt_payload_t entry = it->second;
+#else
+            uint64_t this_hash = position.hash();
+            tt_bucket_t *bucket = &transposition_table[this_hash & (TABLE_SIZE - 1)];
+            tt_payload_t entry;
+
+            if (tt_probe(bucket, this_hash, &entry) && entry.fields.depth >= depth)
+            {
+
+#endif
+                if (__builtin_expect(entry.fields.flag & 1, 0))
                 {
-                    if (entry.score <= alpha) // if current alpha >= cached alpha then the alpha during evaluation wont change, thus we can return the current alpha
+                    if (entry.fields.eval <= alpha) // if current alpha >= cached alpha then the alpha during evaluation wont change, thus we can return the current alpha
                         return alpha;
-                    if (entry.flag > 1) // if the cached alpha is exact && it is bigger than the current alpha (because of the condition above) then we can return it
-                        return entry.score;
-                    beta = (beta > entry.score) ? entry.score : beta;
+                    if (entry.fields.flag > 1) // if the cached alpha is exact && it is bigger than the current alpha (because of the condition above) then we can return it
+                        return entry.fields.eval;
+                    beta = (beta > entry.fields.eval) ? entry.fields.eval : beta;
                     // cached alpha is lower bound
                 }
                 else
                 {
-                    if (entry.score > alpha)
+                    if (entry.fields.eval > alpha)
                     {
-                        if (entry.score >= beta)
-                            return entry.score;
-                        alpha = entry.score;
+                        if (entry.fields.eval >= beta)
+                            return entry.fields.eval;
+                        alpha = entry.fields.eval;
                     }
                 }
             }
+
             alphabeg = alpha;
         }
 
@@ -2424,7 +2457,15 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
         }
         if (depth > MIN_CACHE_DEPTH)
-            TRACK_ENTRY_MAX_END();
+        {
+#ifdef BOOST_CACHE_BACKEND
+            SIMD_NAME(cache)
+            [depth][position] = {.fields = {alpha, (uint16_t)depth, (alpha > alphabeg) ? (uint16_t)3 : (uint16_t)1}};
+#else
+            uint64_t this_hash = position.hash();
+            tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, alpha, (uint16_t)depth, (alpha > alphabeg) ? (uint16_t)3 : (uint16_t)1);
+#endif
+        }
         return alpha;
     }
     else
@@ -2435,7 +2476,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         const uint64_t cur_boosted_mask = position.is_boosted_mask & secmask;
         const uint64_t enemy_firewall_mask = (uint64_t)(position.firewall_fir & 1) << (position.firewall_fir >> 1);
-        const uint64_t unmoveable_mask = firmask | enemy_firewall_mask;
+        const uint64_t unmoveable_mask = firmask | secmask | enemy_firewall_mask;
 
         if (position.sec_link == 3) // fast path if we are about to win
         {
@@ -2473,32 +2514,37 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
         int betabeg;
         if (depth > MIN_CACHE_DEPTH)
         {
+#ifdef BOOST_CACHE_BACKEND
             auto it = SIMD_NAME(cache)[depth].find(position);
-            if (it != SIMD_NAME(cache)[depth].end())
-            {
-#ifdef CACHE_DEBUG
-                SIMD_NAME(cache_entry_tracker)
-                [it->second.cache_id]
-                    .lookup_entries++;
-#endif
 
-                ttentry_t entry = it->second;
-                if (__builtin_expect(entry.flag & 1, 0))
+            if (it != SIMD_NAME(cache)[depth].end() && (int)it->second.fields.depth >= depth)
+            {
+                tt_payload_t entry = it->second;
+#else
+            uint64_t this_hash = position.hash();
+            tt_bucket_t *bucket = &transposition_table[this_hash & (TABLE_SIZE - 1)];
+            tt_payload_t entry;
+
+            if (tt_probe(bucket, this_hash, &entry) && entry.fields.depth >= depth)
+            {
+
+#endif
+                if (__builtin_expect(entry.fields.flag & 1, 0))
                 {
-                    if (entry.score >= beta) // if current beta <= cached beta then the beta during evaluation wont change, thus we can return the current beta
+                    if (entry.fields.eval >= beta) // if current beta <= cached beta then the beta during evaluation wont change, thus we can return the current beta
                         return beta;
-                    if (entry.flag > 1) // if the cached beta is exact && it is smaller than the current beta (because of the condition above) then we can return it
-                        return entry.score;
-                    alpha = (alpha < entry.score) ? entry.score : alpha;
+                    if (entry.fields.flag > 1) // if the cached beta is exact && it is smaller than the current beta (because of the condition above) then we can return it
+                        return entry.fields.eval;
+                    alpha = (alpha < entry.fields.eval) ? entry.fields.eval : alpha;
                     // cached beta is upper bound
                 }
                 else
                 {
-                    if (entry.score < beta)
+                    if (entry.fields.eval < beta)
                     {
-                        if (entry.score <= alpha)
-                            return entry.score;
-                        beta = entry.score;
+                        if (entry.fields.eval <= alpha)
+                            return entry.fields.eval;
+                        beta = entry.fields.eval;
                     }
                 }
             }
@@ -3016,18 +3062,40 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
             }
         }
         if (depth > MIN_CACHE_DEPTH)
-            TRACK_ENTRY_MIN_END();
+        {
+#ifdef BOOST_CACHE_BACKEND
+            SIMD_NAME(cache)
+            [depth][position] = {.fields = {beta, (uint16_t)depth, (beta > betabeg) ? (uint16_t)3 : (uint16_t)1}};
+#else
+            uint64_t this_hash = position.hash();
+            tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, beta, (uint16_t)depth, (beta < betabeg) ? (uint16_t)3 : (uint16_t)1);
+#endif
+        }
         return beta;
     }
 
 __cache_beta:
+{
+#ifdef BOOST_CACHE_BACKEND
     SIMD_NAME(cache)
-    [depth][position] = {beta, 0};
+    [depth][position] = {.fields = {beta, (uint16_t)depth, 0}};
+#else
+    uint64_t this_hash = position.hash();
+    tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, beta, (uint16_t)depth, 0);
+#endif
+}
     return beta;
 
 __cache_alpha:
+{
+#ifdef BOOST_CACHE_BACKEND
     SIMD_NAME(cache)
-    [depth][position] = {alpha, 0};
+    [depth][position] = {.fields = {alpha, (uint16_t)depth, 0}};
+#else
+    uint64_t this_hash = position.hash();
+    tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, alpha, (uint16_t)depth, 0);
+#endif
+}
     return alpha;
 }
 
@@ -3055,9 +3123,7 @@ SIMD_NAME(minimax_main)(const int depth, int alpha, int beta, const bool player,
 
         field_t best_field = all_moves.moves[0];
 
-        for (int i = 0; i < MAX_DEPTH; ++i)
-            SIMD_NAME(cache)
-        [i].clear();
+        CLEAR_TT();
 
         bool is_first_move = true;
 
@@ -3108,9 +3174,8 @@ SIMD_NAME(minimax_main)(const int depth, int alpha, int beta, const bool player,
                 return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-32768 * depth)};
 
         field_t best_field = all_moves.moves[0];
-        for (int i = 0; i < MAX_DEPTH; ++i)
-            SIMD_NAME(cache)
-        [i].clear();
+
+        CLEAR_TT();
 
         bool is_first_move = true;
 
@@ -3170,6 +3235,12 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
     minimax_main_result_t
         best_result;
 
+    struct move_scores_wrapper
+    {
+        int move_id;
+        int move_eval;
+    };
+
     clock_gettime(CLOCK_MONOTONIC, &global_start);
 
     if (player)
@@ -3183,7 +3254,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
         field_t best_field = all_moves.moves[0];
         int prev_alpha = alpha;
 
-        std::pair<int, int> move_scores[MAX_MOVES];
+        move_scores_wrapper move_scores[MAX_MOVES];
         for (int i = 0; i < all_moves.moves_count; ++i)
             move_scores[i] = {i, MIN};
 
@@ -3194,9 +3265,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
             int64_t cur_rec_count = SIMD_NAME(rec_counter);
             clock_gettime(CLOCK_MONOTONIC, &start);
 
-            for (int i = 0; i < MAX_DEPTH; ++i)
-                SIMD_NAME(cache)
-            [i].clear();
+            CLEAR_TT();
 
             if (current_depth > 2)
             {
@@ -3206,9 +3275,9 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                     int j = i - 1;
                     while (j >= 0)
                     {
-                        if (move_scores[j].second > key.second)
+                        if (move_scores[j].move_eval > key.move_eval)
                             break;
-                        if (move_scores[j].second == key.second && move_scores[j].first <= key.first)
+                        if (move_scores[j].move_eval == key.move_eval && move_scores[j].move_id <= key.move_id)
                             break;
                         move_scores[j + 1] = move_scores[j];
                         --j;
@@ -3220,7 +3289,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
             int iteration_alpha = prev_alpha - 56;
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
-                int move_idx = move_scores[i].first;
+                int move_idx = move_scores[i].move_id;
 
                 field_t pos = all_moves.moves[move_idx];
 
@@ -3236,7 +3305,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                         childres = SIMD_NAME(minimax)(current_depth - 1, iteration_alpha, beta, false, pos);
                 }
 
-                move_scores[i].second = childres;
+                move_scores[i].move_eval = childres;
 
                 if (childres > iteration_alpha)
                 {
@@ -3253,7 +3322,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                 {
                     debug_printf("Search order: ");
                     for (int i = 0; i < all_moves.moves_count; ++i)
-                        debug_printf("%d, ", move_scores[i].first);
+                        debug_printf("%d, ", move_scores[i].move_id);
                     debug_printf("\n");
                     debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
 
@@ -3269,7 +3338,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                 iteration_alpha = MIN;
                 for (int i = 0; i < all_moves.moves_count; ++i)
                 {
-                    int move_idx = move_scores[i].first;
+                    int move_idx = move_scores[i].move_id;
 
                     field_t pos = all_moves.moves[move_idx];
 
@@ -3285,7 +3354,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                             childres = SIMD_NAME(minimax)(current_depth - 1, iteration_alpha, beta, false, pos);
                     }
 
-                    move_scores[i].second = childres;
+                    move_scores[i].move_eval = childres;
 
                     if (childres > iteration_alpha)
                     {
@@ -3302,7 +3371,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                     {
                         debug_printf("Search order: ");
                         for (int i = 0; i < all_moves.moves_count; ++i)
-                            debug_printf("%d, ", move_scores[i].first);
+                            debug_printf("%d, ", move_scores[i].move_id);
                         debug_printf("\n");
                         debug_printf("timed out p2 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
                         best_result.has_timed_out = true;
@@ -3313,7 +3382,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
             debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
-                debug_printf("%d, ", move_scores[i].first);
+                debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
@@ -3342,7 +3411,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
         field_t best_field = all_moves.moves[0];
         int prev_beta = beta;
 
-        std::pair<int, int> move_scores[MAX_MOVES];
+        move_scores_wrapper move_scores[MAX_MOVES];
         for (int i = 0; i < all_moves.moves_count; ++i)
             move_scores[i] = {i, MAX};
 
@@ -3353,9 +3422,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
             int64_t cur_rec_count = SIMD_NAME(rec_counter);
             clock_gettime(CLOCK_MONOTONIC, &start);
 
-            for (int i = 0; i < MAX_DEPTH; ++i)
-                SIMD_NAME(cache)
-            [i].clear();
+            CLEAR_TT();
 
             if (current_depth > 2)
             {
@@ -3365,9 +3432,9 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                     int j = i - 1;
                     while (j >= 0)
                     {
-                        if (move_scores[j].second < key.second)
+                        if (move_scores[j].move_eval < key.move_eval)
                             break;
-                        if (move_scores[j].second == key.second && move_scores[j].first <= key.first)
+                        if (move_scores[j].move_eval == key.move_eval && move_scores[j].move_id <= key.move_id)
                             break;
                         move_scores[j + 1] = move_scores[j];
                         --j;
@@ -3379,7 +3446,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
             int iteration_beta = prev_beta + 56;
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
-                int move_idx = move_scores[i].first;
+                int move_idx = move_scores[i].move_id;
 
                 int childres;
 
@@ -3394,7 +3461,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                         childres = SIMD_NAME(minimax)(current_depth - 1, alpha, iteration_beta, true, all_moves.moves[move_idx]);
                 }
 
-                move_scores[i].second = childres;
+                move_scores[i].move_eval = childres;
 
                 if (childres < iteration_beta)
                 {
@@ -3411,7 +3478,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                 {
                     debug_printf("Search order: ");
                     for (int i = 0; i < all_moves.moves_count; ++i)
-                        debug_printf("%d, ", move_scores[i].first);
+                        debug_printf("%d, ", move_scores[i].move_id);
                     debug_printf("\n");
                     debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
 
@@ -3427,7 +3494,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                 iteration_beta = MAX;
                 for (int i = 0; i < all_moves.moves_count; ++i)
                 {
-                    int move_idx = move_scores[i].first;
+                    int move_idx = move_scores[i].move_id;
                     int childres;
 
                     if (i == 0)
@@ -3441,7 +3508,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                             childres = SIMD_NAME(minimax)(current_depth - 1, alpha, iteration_beta, true, all_moves.moves[move_idx]);
                     }
 
-                    move_scores[i].second = childres;
+                    move_scores[i].move_eval = childres;
 
                     if (childres < iteration_beta)
                     {
@@ -3458,7 +3525,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                     {
                         debug_printf("Search order: ");
                         for (int i = 0; i < all_moves.moves_count; ++i)
-                            debug_printf("%d, ", move_scores[i].first);
+                            debug_printf("%d, ", move_scores[i].move_id);
                         debug_printf("\n");
                         debug_printf("timed out p2 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
                         best_result.has_timed_out = true;
@@ -3469,7 +3536,7 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
             debug_printf("Search order: ");
             for (int i = 0; i < all_moves.moves_count; ++i)
-                debug_printf("%d, ", move_scores[i].first);
+                debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
             clock_gettime(CLOCK_MONOTONIC, &stop);
