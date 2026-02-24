@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14...3.24)
-project(RNAB LANGUAGES CXX)
+project(RNAB LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -8,9 +8,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Options
 # ─────────────────────────────────────────────
 
-option(RNAB_DEBUG    "Enable RNAB debug mode"                        OFF)
-option(ENABLE_STRIP  "Strip symbols from binary (-s)"                ON)
-option(BUILD_LIBRARY "Build as shared library instead of executable" OFF)
+option(RNAB_DEBUG           "Enable RNAB debug mode"                        OFF)
+option(ENABLE_STRIP         "Strip symbols from binary (-s)"                ON)
+option(BUILD_LIBRARY        "Build as shared library instead of executable" OFF)
+option(BOOST_CACHE_BACKEND  "Use Boost cache backend instead of tt.c"       ON)
+
+set(TABLE_BITS 25 CACHE STRING "Transposition table size as power-of-two bits")
+
+# Validate: must be integer
+if(NOT TABLE_BITS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "TABLE_BITS must be a non-negative integer")
+endif()
+
+# Range check
+if(TABLE_BITS LESS 10 OR TABLE_BITS GREATER 32)
+    message(FATAL_ERROR "TABLE_BITS out of supported range")
+endif()
+
+math(EXPR TABLE_SIZE "1 << ${TABLE_BITS}")
 
 # Android always builds as library
 if(ANDROID)
@@ -28,8 +43,6 @@ FetchContent_Declare(
     boost_unordered
     GIT_REPOSITORY https://github.com/MikePopoloski/boost_unordered.git
     GIT_SHALLOW    TRUE
-    # No GIT_TAG: always fetches the latest commit on the default branch.
-    # Pin to a tag (e.g. GIT_TAG v1.88.0) if you need reproducible builds.
 )
 
 FetchContent_MakeAvailable(boost_unordered)
@@ -48,6 +61,16 @@ else()
 endif()
 
 # ─────────────────────────────────────────────
+# tt.c (compiled only when BOOST_CACHE_BACKEND is OFF)
+# ─────────────────────────────────────────────
+
+if(NOT BOOST_CACHE_BACKEND)
+    add_library(rnab_tt OBJECT rnab_engine/tt.c)
+    set_target_properties(rnab_tt PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_definitions(rnab_tt PRIVATE TABLE_SIZE=${TABLE_SIZE})
+endif()
+
+# ─────────────────────────────────────────────
 # Helper: options shared across all object libs
 # ─────────────────────────────────────────────
 
@@ -58,8 +81,12 @@ function(configure_object_lib target)
     )
     target_compile_features(${target} PRIVATE cxx_std_20)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_definitions(${target} PRIVATE TABLE_SIZE=${TABLE_SIZE})
     if(RNAB_DEBUG)
         target_compile_definitions(${target} PRIVATE RNAB_DEBUG)
+    endif()
+    if(BOOST_CACHE_BACKEND)
+        target_compile_definitions(${target} PRIVATE BOOST_CACHE_BACKEND)
     endif()
 endfunction()
 
@@ -97,7 +124,12 @@ endif()
 # Collect all object libraries
 # ─────────────────────────────────────────────
 
-set(ALL_OBJECTS $<TARGET_OBJECTS:rnab_scalar>)
+set(ALL_OBJECTS
+    $<TARGET_OBJECTS:rnab_scalar>
+)
+if(NOT BOOST_CACHE_BACKEND)
+    list(PREPEND ALL_OBJECTS $<TARGET_OBJECTS:rnab_tt>)
+endif()
 if(IS_X86)
     list(APPEND ALL_OBJECTS
         $<TARGET_OBJECTS:rnab_sse42>
@@ -128,9 +160,14 @@ target_include_directories(rnab PRIVATE
 )
 target_compile_features(rnab PRIVATE cxx_std_20)
 target_compile_options(rnab PRIVATE -O3)
+target_compile_definitions(rnab PRIVATE TABLE_SIZE=${TABLE_SIZE})
 
 if(RNAB_DEBUG)
     target_compile_definitions(rnab PRIVATE RNAB_DEBUG)
+endif()
+
+if(BOOST_CACHE_BACKEND)
+    target_compile_definitions(rnab PRIVATE BOOST_CACHE_BACKEND)
 endif()
 
 # ─────────────────────────────────────────────
@@ -182,8 +219,10 @@ endif()
 # Summary
 # ─────────────────────────────────────────────
 
-message(STATUS "Compiler:      ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "BUILD_LIBRARY: ${BUILD_LIBRARY}")
-message(STATUS "RNAB_DEBUG:    ${RNAB_DEBUG}")
-message(STATUS "ENABLE_STRIP:  ${ENABLE_STRIP}")
-message(STATUS "IS_X86:        ${IS_X86}")
+message(STATUS "Compiler:           ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "BUILD_LIBRARY:      ${BUILD_LIBRARY}")
+message(STATUS "RNAB_DEBUG:         ${RNAB_DEBUG}")
+message(STATUS "ENABLE_STRIP:       ${ENABLE_STRIP}")
+message(STATUS "IS_X86:             ${IS_X86}")
+message(STATUS "TABLE_SIZE:         ${TABLE_SIZE}")
+message(STATUS "BOOST_CACHE_BACKEND:${BOOST_CACHE_BACKEND}")
