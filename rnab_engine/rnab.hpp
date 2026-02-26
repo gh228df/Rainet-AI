@@ -27,7 +27,7 @@ possible_moves_t (*possible_moves)(const field_t *position, const bool player) =
 
 #else
 
-minimax_main_result_t (*minimax_iteration_main)(const int max_depth, const int64_t max_search_time, int alpha, int beta, const bool player, field_t *position) = minimax_main_scalar;
+minimax_main_result_t (*minimax_iteration_main)(const int max_depth, const int64_t max_search_time, int alpha, int beta, const bool player, field_t *position) = minimax_iteration_main_scalar;
 minimax_main_result_t (*minimax_main)(const int depth, int alpha, int beta, const bool player, field_t *position) = minimax_main_scalar;
 possible_moves_t (*possible_moves)(const field_t *position, const bool player) = possible_moves_scalar;
 
