@@ -1,15 +1,16 @@
 #include <time.h>
 #include <stdint.h>
 #include <assert.h>
-#include <stdio.h>
+#include "../third_party/rapidhash.h"
 
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
 #include <boost/unordered/unordered_flat_map.hpp>
-#else
+#elif defined(THREAD_GUARD)
 #include <stdatomic.h>
 #endif
 
-const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
+extern const int indexes[70];
+extern const uint64_t binom[65][17];
 
 #ifndef GAME_CONSTANTS
 #define GAME_CONSTANTS
@@ -50,7 +51,7 @@ const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58,
 #define CAN_MOVE_DOUBLE_BACKWARD 18446744073709486080ULL
 
 #ifdef RNAB_DEBUG
-#define debug_printf(...) printf(__VA_ARGS__)
+#define debug_printf(...) __builtin_printf(__VA_ARGS__)
 #else
 #define debug_printf(...) ((void)0)
 #endif
@@ -61,8 +62,8 @@ const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58,
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
 
-#if defined(THREAD_GUARD) && defined(BOOST_CACHE_BACKEND)
-#error "THREAD_GUARD is not supported with BOOST_CACHE_BACKEND"
+#if defined(THREAD_GUARD) && defined(HASHMAP_CACHE_BACKEND)
+#error "THREAD_GUARD is not supported with HASHMAP_CACHE_BACKEND"
 #endif
 
 typedef union
@@ -71,8 +72,12 @@ typedef union
     struct
     {
         int32_t eval;
+#ifndef HASHMAP_CACHE_BACKEND
         uint16_t depth;
         uint16_t flag;
+#else
+        uint8_t flag;
+#endif
     } fields;
 } tt_payload_t;
 
@@ -94,8 +99,6 @@ typedef struct
     tt_entry_t depth_preferred;
     tt_entry_t scratch;
 } tt_bucket_t;
-
-#include "wyhash.h"
 
 struct field_t
 {
@@ -122,6 +125,125 @@ struct field_t
     uint8_t is_swap_available_fir : 1;
     uint8_t is_swap_available_sec : 1;
 
+    field_t(__uint128_t position)
+    {
+        is_sec_mask = 0;
+        is_link_mask = 0;
+        is_fir_mask = 0;
+
+        forward_adv_fir = 0;
+        forward_adv_sec = 0;
+
+        is_checker_available_fir = 1;
+        is_checker_available_sec = 1;
+
+        uint16_t ownership_mask = (uint16_t)(position >> (50 + 0));
+        uint16_t link_mask = (uint16_t)(position >> (50 + 16));
+
+        firewall_fir = (uint8_t)(position >> (50 + 16 + 16));
+        firewall_sec = (uint8_t)(position >> (50 + 16 + 16 + 8));
+
+        uint8_t boosted_fir = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8));
+        uint8_t boosted_sec = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8 + 8));
+
+        is_boosted_mask = ((uint64_t)(boosted_fir & 1) << (boosted_fir >> 1)) | ((uint64_t)(boosted_sec & 1) << (boosted_sec >> 1));
+
+        fir_link = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8 + 8 + 8)) & 3;
+        sec_link = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2)) & 3;
+        fir_virus = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2)) & 3;
+        sec_virus = (uint8_t)(position >> (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2)) & 3;
+
+        is_swap_available_fir = (position >> (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2 + 2)) & 1;
+        is_swap_available_sec = (position >> (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2 + 2 + 1)) & 1;
+
+        int total_cards = 16 - (fir_link + sec_link + fir_virus + sec_virus);
+        int prev = -1;
+
+        uint64_t rank = (uint64_t)(position & ((1ULL << 50) - 1));
+
+        for (int i = 0; i < total_cards; ++i)
+        {
+            int rem = total_cards - i - 1;
+            int sq = prev + 1;
+
+            while (true)
+            {
+                uint64_t c = binom[63 - sq][rem];
+                if (rank < c)
+                    break;
+                rank -= c;
+                ++sq;
+            }
+
+            if (ownership_mask & (1 << i))
+            {
+                forward_adv_sec += (sq >> 3);
+                is_sec_mask |= 1ULL << sq;
+            }
+            else
+            {
+                forward_adv_fir += 7 - (sq >> 3);
+                is_fir_mask |= 1ULL << sq;
+            }
+
+            is_link_mask |= ((uint64_t)((link_mask >> i) & 1) << sq);
+
+            prev = sq;
+        }
+    }
+
+    inline __attribute__((always_inline)) __uint128_t compact() const
+    {
+        __uint128_t res = 0;
+        uint64_t cards_mask = is_fir_mask | is_sec_mask;
+
+        uint16_t ownership_mask = 0;
+        uint16_t link_mask = 0;
+
+        int prev = -1;
+        int total_cards = __builtin_popcountll(cards_mask);
+
+        for (int i = 0; i < total_cards; ++i)
+        {
+            int pos = __builtin_ctzll(cards_mask);
+            const uint64_t card_mask = 1ULL << pos;
+
+            ownership_mask |= (((is_sec_mask >> pos) & 1) << i);
+            link_mask |= (((is_link_mask >> pos) & 1) << i);
+
+            int rem = total_cards - i - 1;
+            for (int sq = prev + 1; sq < pos; ++sq)
+            {
+                res += (__uint128_t)(binom[63 - sq][rem]);
+            }
+            prev = pos;
+
+            cards_mask ^= card_mask;
+        }
+
+        res |= ((__uint128_t)ownership_mask << (50 + 0));
+        res |= ((__uint128_t)link_mask << (50 + 16));
+
+        res |= ((__uint128_t)firewall_fir << (50 + 16 + 16));
+        res |= ((__uint128_t)firewall_sec << (50 + 16 + 16 + 8));
+
+        uint64_t boosted_mask_fir = is_fir_mask & is_boosted_mask;
+        uint64_t boosted_mask_sec = is_sec_mask & is_boosted_mask;
+
+        res |= ((__uint128_t)(boosted_mask_fir ? ((__builtin_ctzll(boosted_mask_fir) << 1) | 1) : 0) << (50 + 16 + 16 + 8 + 8));
+        res |= ((__uint128_t)(boosted_mask_sec ? ((__builtin_ctzll(boosted_mask_sec) << 1) | 1) : 0) << (50 + 16 + 16 + 8 + 8 + 8));
+
+        res |= ((__uint128_t)fir_link << (50 + 16 + 16 + 8 + 8 + 8 + 8));
+        res |= ((__uint128_t)sec_link << (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2));
+        res |= ((__uint128_t)fir_virus << (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2));
+        res |= ((__uint128_t)sec_virus << (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2));
+
+        res |= ((__uint128_t)is_swap_available_fir << (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2 + 2));
+        res |= ((__uint128_t)is_swap_available_sec << (50 + 16 + 16 + 8 + 8 + 8 + 8 + 2 + 2 + 2 + 2 + 1));
+
+        return res;
+    }
+
     inline __attribute__((always_inline)) bool operator==(const field_t &other) const
     {
         return __builtin_memcmp(this, &other, sizeof(field_t)) == 0;
@@ -129,94 +251,94 @@ struct field_t
 
     inline __attribute__((always_inline)) uint64_t hash() const
     {
-        return wyhash(this, sizeof(field_t), 0, _wyp);
+        return rapidhashNano(this, 0);
     }
 
     inline __attribute__((always_inline)) size_t operator()(const field_t &s) const
     {
-        return wyhash(&s, sizeof(field_t), 0, _wyp);
+        return rapidhashNano(&s, 0);
     }
 
     bool operator!=(const field_t &other) const
     {
         if (is_sec_mask != other.is_sec_mask)
         {
-            printf("Mismatch in is_sec_mask\n");
-            return true;
-        }
-        if (is_link_mask != other.is_link_mask)
-        {
-            printf("Mismatch in is_link_mask\n");
+            __builtin_printf("Mismatch in is_sec_mask\n");
             return true;
         }
         if (is_fir_mask != other.is_fir_mask)
         {
-            printf("Mismatch in is_fir_mask\n");
+            __builtin_printf("Mismatch in is_fir_mask\n");
+            return true;
+        }
+        if (is_link_mask != other.is_link_mask)
+        {
+            __builtin_printf("Mismatch in is_link_mask\n");
             return true;
         }
         if (is_boosted_mask != other.is_boosted_mask)
         {
-            printf("Mismatch in is_boosted_mask\n");
+            __builtin_printf("Mismatch in is_boosted_mask\n");
             return true;
         }
         if (is_swap_available_fir != other.is_swap_available_fir)
         {
-            printf("Mismatch in is_swap_available_fir\n");
+            __builtin_printf("Mismatch in is_swap_available_fir\n");
             return true;
         }
         if (is_swap_available_sec != other.is_swap_available_sec)
         {
-            printf("Mismatch in is_swap_available_sec\n");
+            __builtin_printf("Mismatch in is_swap_available_sec\n");
             return true;
         }
         if (is_checker_available_fir != other.is_checker_available_fir)
         {
-            printf("Mismatch in is_checker_available_fir\n");
+            __builtin_printf("Mismatch in is_checker_available_fir\n");
             return true;
         }
         if (is_checker_available_sec != other.is_checker_available_sec)
         {
-            printf("Mismatch in is_checker_available_sec\n");
+            __builtin_printf("Mismatch in is_checker_available_sec\n");
             return true;
         }
         if (firewall_fir != other.firewall_fir)
         {
-            printf("Mismatch in firewall_fir\n");
+            __builtin_printf("Mismatch in firewall_fir\n");
             return true;
         }
         if (firewall_sec != other.firewall_sec)
         {
-            printf("Mismatch in firewall_sec\n");
+            __builtin_printf("Mismatch in firewall_sec\n");
             return true;
         }
         if (fir_virus != other.fir_virus)
         {
-            printf("Mismatch in fir_virus\n");
+            __builtin_printf("Mismatch in fir_virus\n");
             return true;
         }
         if (fir_link != other.fir_link)
         {
-            printf("Mismatch in fir_link\n");
+            __builtin_printf("Mismatch in fir_link\n");
             return true;
         }
         if (forward_adv_fir != other.forward_adv_fir)
         {
-            printf("Mismatch in forward_adv_fir %d != %d\n", forward_adv_fir, other.forward_adv_fir);
+            __builtin_printf("Mismatch in forward_adv_fir %d != %d\n", forward_adv_fir, other.forward_adv_fir);
             return true;
         }
         if (forward_adv_sec != other.forward_adv_sec)
         {
-            printf("Mismatch in forward_adv_sec\n");
+            __builtin_printf("Mismatch in forward_adv_sec\n");
             return true;
         }
         if (sec_virus != other.sec_virus)
         {
-            printf("Mismatch in sec_virus\n");
+            __builtin_printf("Mismatch in sec_virus\n");
             return true;
         }
         if (sec_link != other.sec_link)
         {
-            printf("Mismatch in sec_link\n");
+            __builtin_printf("Mismatch in sec_link\n");
             return true;
         }
         return false;
@@ -226,19 +348,19 @@ struct field_t
     {
         if (is_fir_mask & is_sec_mask)
         {
-            printf("failed 7\n");
+            __builtin_printf("failed 7\n");
             return false;
         }
 
         if (__builtin_popcountll(is_fir_mask & is_boosted_mask) > 1)
         {
-            printf("failed 1\n");
+            __builtin_printf("failed 1\n");
             return false;
         }
 
         if (__builtin_popcountll(is_sec_mask & is_boosted_mask) > 1)
         {
-            printf("failed 2\n");
+            __builtin_printf("failed 2\n");
             return false;
         }
 
@@ -257,7 +379,7 @@ struct field_t
 
         if (sum != forward_adv_fir)
         {
-            printf("failed 3, %d != %d\n", sum, forward_adv_fir);
+            __builtin_printf("failed 3, %d != %d\n", sum, forward_adv_fir);
             return false;
         }
 
@@ -275,7 +397,7 @@ struct field_t
 
         if (sum != forward_adv_sec)
         {
-            printf("failed 4\n");
+            __builtin_printf("failed 4\n");
             return false;
         }
 
@@ -372,52 +494,52 @@ struct field_t
 
     void print_field()
     {
-        printf("Virus: %d         Link: %d\n", fir_virus, fir_link);
+        __builtin_printf("Virus: %d         Link: %d\n", fir_virus, fir_link);
         for (int i = 63; i >= 0; --i)
         {
             if (((is_fir_mask & is_link_mask) >> i) & 1)
             {
                 if ((is_boosted_mask >> i) & 1)
                 {
-                    printf("\033[32m[\033[0m\033[34mL\033[0m\033[32m]\033[0m");
+                    __builtin_printf("\033[32m[\033[0m\033[34mL\033[0m\033[32m]\033[0m");
                     goto end;
                 }
-                printf("[\033[32mL\033[0m]");
+                __builtin_printf("[\033[32mL\033[0m]");
             }
             else if ((is_fir_mask >> i) & 1)
             {
                 if ((is_boosted_mask >> i) & 1)
                 {
-                    printf("\033[32m[\033[0m\033[34mV\033[0m\033[32m]\033[0m");
+                    __builtin_printf("\033[32m[\033[0m\033[34mV\033[0m\033[32m]\033[0m");
                     goto end;
                 }
-                printf("[\033[32mV\033[0m]");
+                __builtin_printf("[\033[32mV\033[0m]");
             }
             else if (((is_sec_mask & is_link_mask) >> i) & 1)
             {
                 if ((is_boosted_mask >> i) & 1)
                 {
-                    printf("\033[31m[\033[0m\033[34mL\033[0m\033[31m]\033[0m");
+                    __builtin_printf("\033[31m[\033[0m\033[34mL\033[0m\033[31m]\033[0m");
                     goto end;
                 }
-                printf("[\033[31mL\033[0m]");
+                __builtin_printf("[\033[31mL\033[0m]");
             }
             else if ((is_sec_mask >> i) & 1)
             {
                 if ((is_boosted_mask >> i) & 1)
                 {
-                    printf("\033[31m[\033[0m\033[34mV\033[0m\033[31m]\033[0m");
+                    __builtin_printf("\033[31m[\033[0m\033[34mV\033[0m\033[31m]\033[0m");
                     goto end;
                 }
-                printf("[\033[31mV\033[0m]");
+                __builtin_printf("[\033[31mV\033[0m]");
             }
             else
-                printf("[ ]");
+                __builtin_printf("[ ]");
         end:
             if (i % 8 == 0)
-                printf("\n");
+                __builtin_printf("\n");
         }
-        printf("Virus: %d         Link: %d\n", sec_virus, sec_link);
+        __builtin_printf("Virus: %d         Link: %d\n", sec_virus, sec_link);
     }
 };
 
@@ -436,13 +558,11 @@ struct possible_moves_t
     int moves_count;
 };
 
-// #define TU_COMPILE
-
 #ifdef TU_COMPILE
 
-#ifndef BOOST_CACHE_BACKEND
+#ifndef HASHMAP_CACHE_BACKEND
 
-#define CLEAR_TT() memset(transposition_table, 0, sizeof(transposition_table))
+#define CLEAR_TT() __builtin_memset(transposition_table, 0, sizeof(transposition_table))
 
 extern tt_bucket_t transposition_table[TABLE_SIZE];
 
@@ -510,187 +630,184 @@ static boost::unordered_flat_map<field_t, tt_payload_t, field_t> SIMD_NAME(cache
 
 int SIMD_NAME(cur_search_depth) = 0;
 
-#define PERFORM_ITERATION(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                              \
-    if ((new_pos_bitboard & enemy_firewall_mask) == 0)                                                                                                                 \
-    {                                                                                                                                                                  \
-        if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN || current_card == ITERATION_CURRENT_IS_FIRST_LINK || current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) \
-        {                                                                                                                                                              \
-            if (secmask & new_pos_bitboard)                                                                                                                            \
-            {                                                                                                                                                          \
-                if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
-                {                                                                                                                                                      \
-                    field_t temp_field = *position;                                                                                                                    \
-                                                                                                                                                                       \
-                    int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                                \
-                    temp_field.forward_adv_fir += forward_adv;                                                                                                         \
-                    if (is_boosted)                                                                                                                                    \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
-                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
-                    }                                                                                                                                                  \
-                    else                                                                                                                                               \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
-                    }                                                                                                                                                  \
-                    temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
-                    temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
-                    if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
-                    {                                                                                                                                                  \
-                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
-                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
-                    }                                                                                                                                                  \
-                    else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
-                    {                                                                                                                                                  \
-                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
-                    }                                                                                                                                                  \
-                    temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
-                    ++temp_field.fir_link;                                                                                                                             \
-                                                                                                                                                                       \
-                    WRITE_MOVE();                                                                                                                                      \
-                }                                                                                                                                                      \
-                else if (position->fir_virus < 3)                                                                                                                      \
-                {                                                                                                                                                      \
-                    field_t temp_field = *position;                                                                                                                    \
-                                                                                                                                                                       \
-                    int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                                \
-                    temp_field.forward_adv_fir += forward_adv;                                                                                                         \
-                    if (is_boosted)                                                                                                                                    \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
-                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
-                    }                                                                                                                                                  \
-                    else                                                                                                                                               \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
-                    }                                                                                                                                                  \
-                    temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
-                    if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
-                    {                                                                                                                                                  \
-                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
-                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
-                    }                                                                                                                                                  \
-                    else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
-                    {                                                                                                                                                  \
-                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
-                    }                                                                                                                                                  \
-                    temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
-                    ++temp_field.fir_virus;                                                                                                                            \
-                                                                                                                                                                       \
-                    WRITE_MOVE();                                                                                                                                      \
-                }                                                                                                                                                      \
-            }                                                                                                                                                          \
-            else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
-            {                                                                                                                                                          \
-                field_t temp_field = *position;                                                                                                                        \
-                                                                                                                                                                       \
-                temp_field.forward_adv_fir += forward_adv;                                                                                                             \
-                if (is_boosted)                                                                                                                                        \
-                    temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
-                temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
-                if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                                \
-                {                                                                                                                                                      \
-                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
-                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
-                }                                                                                                                                                      \
-                else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                              \
-                {                                                                                                                                                      \
-                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
-                }                                                                                                                                                      \
-                                                                                                                                                                       \
-                WRITE_MOVE();                                                                                                                                          \
-            }                                                                                                                                                          \
-        }                                                                                                                                                              \
-        else                                                                                                                                                           \
-        {                                                                                                                                                              \
-            if (firmask & new_pos_bitboard)                                                                                                                            \
-            {                                                                                                                                                          \
-                if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
-                {                                                                                                                                                      \
-                    field_t temp_field = *position;                                                                                                                    \
-                                                                                                                                                                       \
-                    int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                                                                                 \
-                    temp_field.forward_adv_sec += forward_adv;                                                                                                         \
-                    if (is_boosted)                                                                                                                                    \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
-                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
-                    }                                                                                                                                                  \
-                    else                                                                                                                                               \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
-                    }                                                                                                                                                  \
-                    temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
-                    temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
-                    if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
-                    {                                                                                                                                                  \
-                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
-                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
-                    }                                                                                                                                                  \
-                    else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
-                    {                                                                                                                                                  \
-                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
-                    }                                                                                                                                                  \
-                    temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
-                    ++temp_field.sec_link;                                                                                                                             \
-                                                                                                                                                                       \
-                    WRITE_MOVE();                                                                                                                                      \
-                }                                                                                                                                                      \
-                else if (position->sec_virus < 3)                                                                                                                      \
-                {                                                                                                                                                      \
-                    field_t temp_field = *position;                                                                                                                    \
-                                                                                                                                                                       \
-                    int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                    temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                                                                                 \
-                    temp_field.forward_adv_sec += forward_adv;                                                                                                         \
-                    if (is_boosted)                                                                                                                                    \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
-                        temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
-                    }                                                                                                                                                  \
-                    else                                                                                                                                               \
-                    {                                                                                                                                                  \
-                        temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
-                    }                                                                                                                                                  \
-                    temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
-                    if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
-                    {                                                                                                                                                  \
-                        uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
-                        temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
-                    }                                                                                                                                                  \
-                    else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
-                    {                                                                                                                                                  \
-                        temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
-                    }                                                                                                                                                  \
-                    temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
-                    ++temp_field.sec_virus;                                                                                                                            \
-                                                                                                                                                                       \
-                    WRITE_MOVE();                                                                                                                                      \
-                }                                                                                                                                                      \
-            }                                                                                                                                                          \
-            else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
-            {                                                                                                                                                          \
-                field_t temp_field = *position;                                                                                                                        \
-                                                                                                                                                                       \
-                temp_field.forward_adv_sec += forward_adv;                                                                                                             \
-                if (is_boosted)                                                                                                                                        \
-                    temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
-                temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
-                if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                               \
-                {                                                                                                                                                      \
-                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
-                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
-                }                                                                                                                                                      \
-                else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                             \
-                {                                                                                                                                                      \
-                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
-                }                                                                                                                                                      \
-                                                                                                                                                                       \
-                WRITE_MOVE();                                                                                                                                          \
-            }                                                                                                                                                          \
-        }                                                                                                                                                              \
+#define PERFORM_ITERATION(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                          \
+    if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN || current_card == ITERATION_CURRENT_IS_FIRST_LINK || current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) \
+    {                                                                                                                                                              \
+        if (secmask & new_pos_bitboard)                                                                                                                            \
+        {                                                                                                                                                          \
+            if (sec_link_mask & new_pos_bitboard)                                                                                                                  \
+            {                                                                                                                                                      \
+                field_t temp_field = *position;                                                                                                                    \
+                                                                                                                                                                   \
+                int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
+                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                       \
+                temp_field.forward_adv_fir += forward_adv;                                                                                                         \
+                if (is_boosted)                                                                                                                                    \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                    temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
+                }                                                                                                                                                  \
+                else                                                                                                                                               \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
+                }                                                                                                                                                  \
+                temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
+                if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
+                {                                                                                                                                                  \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
+                }                                                                                                                                                  \
+                else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
+                {                                                                                                                                                  \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
+                }                                                                                                                                                  \
+                temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
+                ++temp_field.fir_link;                                                                                                                             \
+                                                                                                                                                                   \
+                WRITE_MOVE();                                                                                                                                      \
+            }                                                                                                                                                      \
+            else if (position->fir_virus < 3)                                                                                                                      \
+            {                                                                                                                                                      \
+                field_t temp_field = *position;                                                                                                                    \
+                                                                                                                                                                   \
+                int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
+                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                       \
+                temp_field.forward_adv_fir += forward_adv;                                                                                                         \
+                if (is_boosted)                                                                                                                                    \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                    temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
+                }                                                                                                                                                  \
+                else                                                                                                                                               \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
+                }                                                                                                                                                  \
+                temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                            \
+                {                                                                                                                                                  \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
+                }                                                                                                                                                  \
+                else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                          \
+                {                                                                                                                                                  \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
+                }                                                                                                                                                  \
+                temp_field.is_sec_mask ^= new_pos_bitboard;                                                                                                        \
+                ++temp_field.fir_virus;                                                                                                                            \
+                                                                                                                                                                   \
+                WRITE_MOVE();                                                                                                                                      \
+            }                                                                                                                                                      \
+        }                                                                                                                                                          \
+        else if ((firmask & new_pos_bitboard) == 0)                                                                                                                \
+        {                                                                                                                                                          \
+            field_t temp_field = *position;                                                                                                                        \
+                                                                                                                                                                   \
+            temp_field.forward_adv_fir += forward_adv;                                                                                                             \
+            if (is_boosted)                                                                                                                                        \
+                temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
+            temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
+            if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                                                                                                \
+            {                                                                                                                                                      \
+                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
+                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
+            }                                                                                                                                                      \
+            else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                              \
+            {                                                                                                                                                      \
+                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
+            }                                                                                                                                                      \
+                                                                                                                                                                   \
+            WRITE_MOVE();                                                                                                                                          \
+        }                                                                                                                                                          \
+    }                                                                                                                                                              \
+    else                                                                                                                                                           \
+    {                                                                                                                                                              \
+        if (firmask & new_pos_bitboard)                                                                                                                            \
+        {                                                                                                                                                          \
+            if (fir_link_mask & new_pos_bitboard)                                                                                                                  \
+            {                                                                                                                                                      \
+                field_t temp_field = *position;                                                                                                                    \
+                                                                                                                                                                   \
+                int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
+                temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                                                                                 \
+                temp_field.forward_adv_sec += forward_adv;                                                                                                         \
+                if (is_boosted)                                                                                                                                    \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                    temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
+                }                                                                                                                                                  \
+                else                                                                                                                                               \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
+                }                                                                                                                                                  \
+                temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                temp_field.is_link_mask &= ~new_pos_bitboard;                                                                                                      \
+                if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
+                {                                                                                                                                                  \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
+                }                                                                                                                                                  \
+                else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
+                {                                                                                                                                                  \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
+                }                                                                                                                                                  \
+                temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
+                ++temp_field.sec_link;                                                                                                                             \
+                                                                                                                                                                   \
+                WRITE_MOVE();                                                                                                                                      \
+            }                                                                                                                                                      \
+            else if (position->sec_virus < 3)                                                                                                                      \
+            {                                                                                                                                                      \
+                field_t temp_field = *position;                                                                                                                    \
+                                                                                                                                                                   \
+                int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
+                temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                                                                                 \
+                temp_field.forward_adv_sec += forward_adv;                                                                                                         \
+                if (is_boosted)                                                                                                                                    \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask ^= (cur_pos_bitboard);                                                                                              \
+                    temp_field.is_boosted_mask |= (new_pos_bitboard);                                                                                              \
+                }                                                                                                                                                  \
+                else                                                                                                                                               \
+                {                                                                                                                                                  \
+                    temp_field.is_boosted_mask &= ~(new_pos_bitboard);                                                                                             \
+                }                                                                                                                                                  \
+                temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                   \
+                if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                           \
+                {                                                                                                                                                  \
+                    uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                    \
+                    temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                             \
+                }                                                                                                                                                  \
+                else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                         \
+                {                                                                                                                                                  \
+                    temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                              \
+                }                                                                                                                                                  \
+                temp_field.is_fir_mask ^= new_pos_bitboard;                                                                                                        \
+                ++temp_field.sec_virus;                                                                                                                            \
+                                                                                                                                                                   \
+                WRITE_MOVE();                                                                                                                                      \
+            }                                                                                                                                                      \
+        }                                                                                                                                                          \
+        else if ((secmask & new_pos_bitboard) == 0)                                                                                                                \
+        {                                                                                                                                                          \
+            field_t temp_field = *position;                                                                                                                        \
+                                                                                                                                                                   \
+            temp_field.forward_adv_sec += forward_adv;                                                                                                             \
+            if (is_boosted)                                                                                                                                        \
+                temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                               \
+            temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                       \
+            if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                                                                                               \
+            {                                                                                                                                                      \
+                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                                                                                        \
+                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                                                                                 \
+            }                                                                                                                                                      \
+            else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                             \
+            {                                                                                                                                                      \
+                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                                                                                  \
+            }                                                                                                                                                      \
+                                                                                                                                                                   \
+            WRITE_MOVE();                                                                                                                                          \
+        }                                                                                                                                                          \
     }
 
 possible_moves_t SIMD_NAME(possible_moves)(const field_t *__restrict__ position, const bool player)
@@ -746,7 +863,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *__restrict__ position,
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_fir -= (uint8_t)( 7 - (__builtin_ctzll(cur_boosted_mask) >> 3));
+            temp_field.forward_adv_fir -= (uint8_t)(7 - (__builtin_ctzll(cur_boosted_mask) >> 3));
             temp_field.is_boosted_mask &= ~cur_boosted_mask;
             temp_field.is_fir_mask &= ~cur_boosted_mask;
             temp_field.is_link_mask &= ~cur_boosted_mask;
@@ -1453,7 +1570,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *__restrict__ position,
                 field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                                \
+                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                       \
                 temp_field.forward_adv_fir += forward_adv;                                                                                                         \
                 if (is_boosted)                                                                                                                                    \
                 {                                                                                                                                                  \
@@ -1494,7 +1611,7 @@ possible_moves_t SIMD_NAME(possible_moves)(const field_t *__restrict__ position,
                 field_t temp_field = position;                                                                                                                     \
                                                                                                                                                                    \
                 int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                                                                                             \
-                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                                \
+                temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                                                                                       \
                 temp_field.forward_adv_fir += forward_adv;                                                                                                         \
                 if (is_boosted)                                                                                                                                    \
                 {                                                                                                                                                  \
@@ -1854,7 +1971,7 @@ BEGIN_BRANCH_TRACKING();
 
 static int64_t SIMD_NAME(rec_counter) = 0;
 
-int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const field_t &__restrict__ position)
+int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const field_t &__restrict__ position) noexcept
 {
 #ifdef BRANCH_DEBUG
     ++SIMD_NAME(rec_counter);
@@ -1875,28 +1992,27 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         if (position.fir_link == 3) // fast path if we are about to win
         {
-            if ((fir_link_mask & 24) || (((fir_link_mask & 2052ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 8ULL) == 0) ||
-                (((fir_link_mask & 4128ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 16ULL) == 0)) // bosted link can be deposited and nothing is blocking it
+            const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
+            if ((fir_link_mask | (((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 24ULL) // bosted link can be deposited and nothing is blocking it
                 return (32768 * depth);
+
             if (sec_link_mask)
             {
                 const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
-                if (((links_masked_out >> 8) & firmask) ||                    // up
-                    ((links_masked_out << 8) & firmask) ||                    // down
-                    (((links_masked_out & CAN_MOVE_RIGHT) >> 1) & firmask) || // left
-                    (((links_masked_out & CAN_MOVE_LEFT) << 1) & firmask))    // right
+
+                if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & firmask)
                     return (32768 * depth);
 
-                if (cur_boosted_mask && links_masked_out)
+                if ((cur_boosted_mask != 0) | (links_masked_out != 0))
                 {
-                    if ((((links_masked_out >> 16) & cur_boosted_mask) && ((unmoveable_mask >> 8) & cur_boosted_mask) == 0) ||                                                                                            // up and not blocked
-                        ((links_masked_out << 16) & cur_boosted_mask && ((unmoveable_mask << 8) & cur_boosted_mask) == 0) ||                                                                                              // down and not blocked
-                        ((((links_masked_out & CAN_MOVE_DOUBLE_RIGHT) >> 2) & cur_boosted_mask) && (((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0) ||                                                // left and not blocked
-                        ((((links_masked_out & CAN_MOVE_DOUBLE_LEFT) << 2) & cur_boosted_mask) && (((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0) ||                                                  // right and not blocked
-                        ((((links_masked_out & CAN_MOVE_RIGHT) >> 9) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0 || ((unmoveable_mask >> 8) & cur_boosted_mask) == 0)) || // up left
-                        ((((links_masked_out & CAN_MOVE_RIGHT) << 7) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0 || ((unmoveable_mask << 8) & cur_boosted_mask) == 0)) || // down left
-                        ((((links_masked_out & CAN_MOVE_LEFT) << 9) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0 || ((unmoveable_mask << 8) & cur_boosted_mask) == 0)) ||   // down right
-                        ((((links_masked_out & CAN_MOVE_LEFT) >> 7) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0 || ((unmoveable_mask >> 8) & cur_boosted_mask) == 0)))     // up right
+                    if ((links_masked_out & (free_mask << 8) & (cur_boosted_mask << 16)) |                                               // up and not blocked
+                        (links_masked_out & (free_mask >> 8) & (cur_boosted_mask >> 16)) |                                               // down and not blocked
+                        (links_masked_out & CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |                        // left and not blocked
+                        (links_masked_out & CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                         // right and not blocked
+                        (links_masked_out & CAN_MOVE_BACKWARD_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // up left
+                        (links_masked_out & CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down left
+                        (links_masked_out & CAN_MOVE_FORWARD_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |   // down right
+                        (links_masked_out & CAN_MOVE_FORWARD_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))   // up right
                         return (32768 * depth);
                 }
             }
@@ -1906,7 +2022,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         if (depth > MIN_CACHE_DEPTH)
         {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
             auto it = SIMD_NAME(cache)[depth].find(position);
 
             if (it != SIMD_NAME(cache)[depth].end())
@@ -1991,26 +2107,31 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
                 }
             }
         }
-        else if (__builtin_expect((((fir_link_mask & 2052ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 8ULL) == 0) || (((fir_link_mask & 4128ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 16ULL) == 0), 0))
+        else
         {
-            field_t temp_field = position;
+            const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
 
-            temp_field.forward_adv_fir -=(uint8_t) (7 - (__builtin_ctzll(cur_boosted_mask) >> 3));
-            temp_field.is_boosted_mask &= ~cur_boosted_mask;
-            temp_field.is_fir_mask &= ~cur_boosted_mask;
-            temp_field.is_link_mask &= ~cur_boosted_mask;
-            ++temp_field.fir_link;
-
-            BRANCH_ENTER_MAX("deposit far");
-            int reschild = (depth > 0) ? SIMD_NAME(minimax)(depth, alpha, beta, false, temp_field) : temp_field.evaluate();
-            BRANCH_EXIT_MAX();
-
-            alpha = (reschild > alpha) ? reschild : alpha;
-            if (beta <= alpha)
+            if (((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL)
             {
-                if (depth > MIN_CACHE_DEPTH)
-                    TRACK_ENTRY_MAX();
-                return alpha;
+                field_t temp_field = position;
+
+                temp_field.forward_adv_fir -= (uint8_t)(7 - (__builtin_ctzll(cur_boosted_mask) >> 3));
+                temp_field.is_boosted_mask &= ~cur_boosted_mask;
+                temp_field.is_fir_mask &= ~cur_boosted_mask;
+                temp_field.is_link_mask &= ~cur_boosted_mask;
+                ++temp_field.fir_link;
+
+                BRANCH_ENTER_MAX("deposit far");
+                int reschild = (depth > 0) ? SIMD_NAME(minimax)(depth, alpha, beta, false, temp_field) : temp_field.evaluate();
+                BRANCH_EXIT_MAX();
+
+                alpha = (reschild > alpha) ? reschild : alpha;
+                if (beta <= alpha)
+                {
+                    if (depth > MIN_CACHE_DEPTH)
+                        TRACK_ENTRY_MAX();
+                    return alpha;
+                }
             }
         }
 
@@ -2451,9 +2572,9 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
         }
         if (depth > MIN_CACHE_DEPTH)
         {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
             SIMD_NAME(cache)
-            [depth][position] = {.fields = {alpha, (uint16_t)depth, (alpha > alphabeg) ? (uint16_t)3 : (uint16_t)1}};
+            [depth][position] = {.fields = {alpha, (alpha > alphabeg) ? (uint8_t)3 : (uint8_t)1}};
 #else
             uint64_t this_hash = position.hash();
             tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, alpha, (uint16_t)depth, (alpha > alphabeg) ? (uint16_t)3 : (uint16_t)1);
@@ -2474,30 +2595,26 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         if (position.sec_link == 3) // fast path if we are about to win
         {
-            if ((sec_link_mask & 1729382256910270464ULL) || (((sec_link_mask & 2310346608841064448ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 1152921504606846976ULL) == 0) ||
-                (((sec_link_mask & 290482175965396992ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 576460752303423488ULL) == 0)) // bosted link can be deposited and nothing is blocking it
+            const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
+            if ((sec_link_mask | (((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 1729382256910270464ULL) // bosted link can be deposited and nothing is blocking it
                 return (-32768 * depth);
             if (fir_link_mask)
             {
                 const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
-                if (((links_masked_out >> 8) & secmask) ||                    // up
-                    ((links_masked_out << 8) & secmask) ||                    // down
-                    (((links_masked_out & CAN_MOVE_RIGHT) >> 1) & secmask) || // left
-                    (((links_masked_out & CAN_MOVE_LEFT) << 1) & secmask))    // right
+
+                if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & secmask)
                     return (-32768 * depth);
 
-                if (cur_boosted_mask && links_masked_out)
+                if ((cur_boosted_mask != 0) | (links_masked_out != 0))
                 {
-                    // unmoveable_mask should technically be enemy_virus_mask | ally_mask | enemy_firewall_mask but since enemy_link_mask is unreachable unmoveable_mask is used here
-
-                    if ((((links_masked_out >> 16) & cur_boosted_mask) && ((unmoveable_mask >> 8) & cur_boosted_mask) == 0) ||                                                                                            // up and not blocked
-                        ((links_masked_out << 16) & cur_boosted_mask && ((unmoveable_mask << 8) & cur_boosted_mask) == 0) ||                                                                                              // down and not blocked
-                        ((((links_masked_out & CAN_MOVE_DOUBLE_RIGHT) >> 2) & cur_boosted_mask) && (((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0) ||                                                // left and not blocked
-                        ((((links_masked_out & CAN_MOVE_DOUBLE_LEFT) << 2) & cur_boosted_mask) && (((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0) ||                                                  // right and not blocked
-                        ((((links_masked_out & CAN_MOVE_RIGHT) >> 9) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0 || ((unmoveable_mask >> 8) & cur_boosted_mask) == 0)) || // up left
-                        ((((links_masked_out & CAN_MOVE_RIGHT) << 7) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_RIGHT) >> 1) & cur_boosted_mask) == 0 || ((unmoveable_mask << 8) & cur_boosted_mask) == 0)) || // down left
-                        ((((links_masked_out & CAN_MOVE_LEFT) << 9) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0 || ((unmoveable_mask << 8) & cur_boosted_mask) == 0)) ||   // down right
-                        ((((links_masked_out & CAN_MOVE_LEFT) >> 7) & cur_boosted_mask) && ((((unmoveable_mask & CAN_MOVE_LEFT) << 1) & cur_boosted_mask) == 0 || ((unmoveable_mask >> 8) & cur_boosted_mask) == 0)))     // up right
+                    if ((links_masked_out & (free_mask << 8) & (cur_boosted_mask << 16)) |                                               // up and not blocked
+                        (links_masked_out & (free_mask >> 8) & (cur_boosted_mask >> 16)) |                                               // down and not blocked
+                        (links_masked_out & CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |                        // left and not blocked
+                        (links_masked_out & CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                         // right and not blocked
+                        (links_masked_out & CAN_MOVE_BACKWARD_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // up left
+                        (links_masked_out & CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down left
+                        (links_masked_out & CAN_MOVE_FORWARD_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |   // down right
+                        (links_masked_out & CAN_MOVE_FORWARD_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))   // up right
                         return (-32768 * depth);
                 }
             }
@@ -2507,7 +2624,7 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
         if (depth > MIN_CACHE_DEPTH)
         {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
             auto it = SIMD_NAME(cache)[depth].find(position);
 
             if (it != SIMD_NAME(cache)[depth].end())
@@ -2592,26 +2709,31 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
                 }
             }
         }
-        else if (__builtin_expect((((sec_link_mask & 2310346608841064448ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 1152921504606846976ULL) == 0) || (((sec_link_mask & 290482175965396992ULL) & cur_boosted_mask) != 0 && (unmoveable_mask & 576460752303423488ULL) == 0), 0))
+        else
         {
-            field_t temp_field = position;
+            const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
 
-            temp_field.forward_adv_sec -= (uint8_t)(__builtin_ctzll(cur_boosted_mask) >> 3);
-            temp_field.is_boosted_mask &= ~cur_boosted_mask;
-            temp_field.is_sec_mask &= ~cur_boosted_mask;
-            temp_field.is_link_mask &= ~cur_boosted_mask;
-            ++temp_field.sec_link;
-
-            BRANCH_ENTER_MIN("deposit far");
-            int reschild = (depth > 0) ? SIMD_NAME(minimax)(depth, alpha, beta, true, temp_field) : temp_field.evaluate();
-            BRANCH_EXIT_MIN();
-
-            beta = (reschild < beta) ? reschild : beta;
-            if (beta <= alpha)
+            if (((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL)
             {
-                if (depth > MIN_CACHE_DEPTH)
-                    TRACK_ENTRY_MIN();
-                return beta;
+                field_t temp_field = position;
+
+                temp_field.forward_adv_sec -= (uint8_t)(__builtin_ctzll(cur_boosted_mask) >> 3);
+                temp_field.is_boosted_mask &= ~cur_boosted_mask;
+                temp_field.is_sec_mask &= ~cur_boosted_mask;
+                temp_field.is_link_mask &= ~cur_boosted_mask;
+                ++temp_field.sec_link;
+
+                BRANCH_ENTER_MIN("deposit far");
+                int reschild = (depth > 0) ? SIMD_NAME(minimax)(depth, alpha, beta, true, temp_field) : temp_field.evaluate();
+                BRANCH_EXIT_MIN();
+
+                beta = (reschild < beta) ? reschild : beta;
+                if (beta <= alpha)
+                {
+                    if (depth > MIN_CACHE_DEPTH)
+                        TRACK_ENTRY_MIN();
+                    return beta;
+                }
             }
         }
 
@@ -3052,9 +3174,9 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
         }
         if (depth > MIN_CACHE_DEPTH)
         {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
             SIMD_NAME(cache)
-            [depth][position] = {.fields = {beta, (uint16_t)depth, (beta > betabeg) ? (uint16_t)3 : (uint16_t)1}};
+            [depth][position] = {.fields = {beta, (beta < betabeg) ? (uint8_t)3 : (uint8_t)1}};
 #else
             uint64_t this_hash = position.hash();
             tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, beta, (uint16_t)depth, (beta < betabeg) ? (uint16_t)3 : (uint16_t)1);
@@ -3065,9 +3187,9 @@ int SIMD_NAME(minimax)(int depth, int alpha, int beta, const bool player, const 
 
 __cache_beta:
 {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
     SIMD_NAME(cache)
-    [depth][position] = {.fields = {beta, (uint16_t)depth, 0}};
+    [depth][position] = {.fields = {beta, 0}};
 #else
     uint64_t this_hash = position.hash();
     tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, beta, (uint16_t)depth, 0);
@@ -3077,9 +3199,9 @@ __cache_beta:
 
 __cache_alpha:
 {
-#ifdef BOOST_CACHE_BACKEND
+#ifdef HASHMAP_CACHE_BACKEND
     SIMD_NAME(cache)
-    [depth][position] = {.fields = {alpha, (uint16_t)depth, 0}};
+    [depth][position] = {.fields = {alpha, 0}};
 #else
     uint64_t this_hash = position.hash();
     tt_store(&transposition_table[this_hash & (TABLE_SIZE - 1)], this_hash, alpha, (uint16_t)depth, 0);
@@ -3099,7 +3221,7 @@ SIMD_NAME(minimax_main)(const int depth, int alpha, int beta, const bool player,
     assert(depth < MAX_DEPTH);
 
 #ifdef RNAB_DEBUG
-    printf("Calling minimax_main %s\n", STRINGIFY(SIMD_SUFFIX));
+    __builtin_printf("Calling minimax_main %s\n", STRINGIFY(SIMD_SUFFIX));
 #endif
 
     if (player)
@@ -3211,13 +3333,12 @@ SIMD_NAME(minimax_main)(const int depth, int alpha, int beta, const bool player,
 minimax_main_result_t
 SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_time, int alpha, int beta, const bool player, field_t *__restrict__ position)
 {
-    SIMD_NAME(cur_search_depth) = max_depth;
     assert(max_depth >= 2 && max_depth % 2 == 0 && "Depth must be at least 2 and even (divisible by 2) for iterative deepening");
     assert(max_search_time >= 100 && "max_search_time must be at least 100 milliseconds");
     assert(max_depth < MAX_DEPTH);
 
 #ifdef RNAB_DEBUG
-    printf("Calling minimax_iteration_main %s\n", STRINGIFY(SIMD_SUFFIX));
+    __builtin_printf("Calling minimax_iteration_main %s\n", STRINGIFY(SIMD_SUFFIX));
 #endif
 
     struct timespec start, stop, global_start;
@@ -3249,6 +3370,8 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
         for (int current_depth = 2; current_depth <= max_depth; current_depth += 2)
         {
+            SIMD_NAME(cur_search_depth) = current_depth; // dont forget to cur_search_depth locally!
+
             int best_move_idx = -1;
 
             int64_t cur_rec_count = SIMD_NAME(rec_counter);
@@ -3291,7 +3414,9 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
                 {
                     childres = SIMD_NAME(minimax)(current_depth - 1, iteration_alpha, iteration_alpha + 1, false, pos);
                     if (childres > iteration_alpha)
+                    {
                         childres = SIMD_NAME(minimax)(current_depth - 1, iteration_alpha, beta, false, pos);
+                    }
                 }
 
                 move_scores[i].move_eval = childres;
@@ -3406,6 +3531,8 @@ SIMD_NAME(minimax_iteration_main)(const int max_depth, const int64_t max_search_
 
         for (int current_depth = 2; current_depth <= max_depth; current_depth += 2)
         {
+            SIMD_NAME(cur_search_depth) = current_depth; // dont forget to cur_search_depth locally!
+
             int best_move_idx = -1;
 
             int64_t cur_rec_count = SIMD_NAME(rec_counter);
