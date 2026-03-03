@@ -1,13 +1,14 @@
 #include "../rnab_engine/rnab.hpp"
 #include "amalgamation.h"
 #include <pthread.h>
+#include <math.h>
+
+GLFWwindow *window;
 
 #define M_PI 3.14159265358979323846
 
 #define HIDE_ENEMY_CARDS false
-#define MAX_SEARCH_TIME 100000 // 10 seconds
-
-GLFWwindow *window;
+#define MAX_SEARCH_TIME 5000 // 5 seconds
 
 field_t pos;
 
@@ -1275,7 +1276,8 @@ void add_card_controls()
 
 void *ai_move_thread(void *args)
 {
-    debug_printf("pos: %lu %lu %lu %lu %lu\n", *((uint64_t *)(&pos) + 0), *((uint64_t *)(&pos) + 1), *((uint64_t *)(&pos) + 2), *((uint64_t *)(&pos) + 3), *((uint64_t *)(&pos) + 4));
+    debug_printf("pos: ");
+    intern_to_generic_representation(&pos).format();
 
     minimax_main_result_t move = minimax_iteration_main(ai_level, MAX_SEARCH_TIME, MIN, MAX, true, &pos);
 
@@ -1621,7 +1623,7 @@ void begin_game(struct button_t *self)
 }
 
 int main()
-{
+{    
     srand(time(NULL));
 
     init("rnab");
@@ -2191,9 +2193,9 @@ int main()
                         progress = 1.0f;
 
                     float eased = 2.0f * progress - progress * progress;
-
+                    
                     render_tex_scale(sec_texture_ptr, (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(11 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                    if ((old_state.is_sec_mask & old_state.is_boosted_mask) != 0 && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
+                    if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
                     {
                         render_tex_scale(&boost_ally, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                     }
@@ -2211,6 +2213,9 @@ int main()
 
                 if ((current_time - last_time_appear) >= 2250000)
                 {
+                    if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
+                        is_boost_available_sec = true;
+
                     last_time_appear = current_time;
 
                     if (pos.sec_link == 4)
@@ -2274,7 +2279,7 @@ int main()
                     float eased = 2.0f * progress - progress * progress;
 
                     render_tex_scale(sec_texture_ptr, (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(0) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                    if ((old_state.is_fir_mask & old_state.is_boosted_mask) != 0 && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
+                    if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
                     {
                         render_tex_scale(&boost_enemy, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                     }
@@ -2292,6 +2297,9 @@ int main()
 
                 if ((current_time - last_time_appear) >= 2250000)
                 {
+                    if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
+                        is_boost_available_fir = true;
+
                     last_time_appear = current_time;
 
                     if (pos.fir_link == 4)
