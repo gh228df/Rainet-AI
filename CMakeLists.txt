@@ -11,7 +11,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(RNAB_DEBUG           "Enable RNAB debug mode"                        OFF)
 option(ENABLE_STRIP         "Strip symbols from binary (-s)"                ON)
 option(BUILD_LIBRARY        "Build as shared library instead of executable" OFF)
-option(BOOST_CACHE_BACKEND  "Use Boost cache backend instead of tt.c"       ON)
+option(HASHMAP_CACHE_BACKEND  "Use dynamic hashmap cache backend instead of tt.c"       ON)
+
+include(CheckCXXSourceCompiles)
+
+check_cxx_source_compiles("
+    int main() {
+        __uint128_t x = 0;
+        return 0;
+    }
+" HAVE_UINT128)
+
+if(NOT HAVE_UINT128)
+    message(FATAL_ERROR "Compiler does not support __uint128_t")
+endif()
 
 set(TABLE_BITS 25 CACHE STRING "Transposition table size as power-of-two bits")
 
@@ -61,14 +74,17 @@ else()
 endif()
 
 # ─────────────────────────────────────────────
-# tt.c (compiled only when BOOST_CACHE_BACKEND is OFF)
+# tt.c (compiled only when HASHMAP_CACHE_BACKEND is OFF)
 # ─────────────────────────────────────────────
 
-if(NOT BOOST_CACHE_BACKEND)
+if(NOT HASHMAP_CACHE_BACKEND)
     add_library(rnab_tt OBJECT rnab_engine/tt.c)
     set_target_properties(rnab_tt PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(rnab_tt PRIVATE TABLE_SIZE=${TABLE_SIZE})
 endif()
+
+add_library(rnab_const OBJECT rnab_engine/rnab_const.c)
+set_target_properties(rnab_const PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ─────────────────────────────────────────────
 # Helper: options shared across all object libs
@@ -85,8 +101,8 @@ function(configure_object_lib target)
     if(RNAB_DEBUG)
         target_compile_definitions(${target} PRIVATE RNAB_DEBUG)
     endif()
-    if(BOOST_CACHE_BACKEND)
-        target_compile_definitions(${target} PRIVATE BOOST_CACHE_BACKEND)
+    if(HASHMAP_CACHE_BACKEND)
+        target_compile_definitions(${target} PRIVATE HASHMAP_CACHE_BACKEND)
     endif()
 endfunction()
 
@@ -124,10 +140,9 @@ endif()
 # Collect all object libraries
 # ─────────────────────────────────────────────
 
-set(ALL_OBJECTS
-    $<TARGET_OBJECTS:rnab_scalar>
-)
-if(NOT BOOST_CACHE_BACKEND)
+set(ALL_OBJECTS $<TARGET_OBJECTS:rnab_const>)
+list(PREPEND ALL_OBJECTS $<TARGET_OBJECTS:rnab_scalar>)
+if(NOT HASHMAP_CACHE_BACKEND)
     list(PREPEND ALL_OBJECTS $<TARGET_OBJECTS:rnab_tt>)
 endif()
 if(IS_X86)
@@ -166,15 +181,19 @@ if(RNAB_DEBUG)
     target_compile_definitions(rnab PRIVATE RNAB_DEBUG)
 endif()
 
-if(BOOST_CACHE_BACKEND)
-    target_compile_definitions(rnab PRIVATE BOOST_CACHE_BACKEND)
+if(HASHMAP_CACHE_BACKEND)
+    target_compile_definitions(rnab PRIVATE HASHMAP_CACHE_BACKEND)
 endif()
 
 # ─────────────────────────────────────────────
 # Link options
 # ─────────────────────────────────────────────
 
-target_link_options(rnab PRIVATE -fuse-ld=lld -flto)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(rnab PRIVATE -fuse-ld=bfd -flto)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_link_options(rnab PRIVATE -fuse-ld=lld -flto)
+endif()
 
 # Static linking rules per platform:
 #   Windows  -> always fully static (library or executable)
@@ -219,10 +238,10 @@ endif()
 # Summary
 # ─────────────────────────────────────────────
 
-message(STATUS "Compiler:           ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "BUILD_LIBRARY:      ${BUILD_LIBRARY}")
-message(STATUS "RNAB_DEBUG:         ${RNAB_DEBUG}")
-message(STATUS "ENABLE_STRIP:       ${ENABLE_STRIP}")
-message(STATUS "IS_X86:             ${IS_X86}")
-message(STATUS "TABLE_SIZE:         ${TABLE_SIZE}")
-message(STATUS "BOOST_CACHE_BACKEND:${BOOST_CACHE_BACKEND}")
+message(STATUS "Compiler:             ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "BUILD_LIBRARY:        ${BUILD_LIBRARY}")
+message(STATUS "RNAB_DEBUG:           ${RNAB_DEBUG}")
+message(STATUS "ENABLE_STRIP:         ${ENABLE_STRIP}")
+message(STATUS "IS_X86:               ${IS_X86}")
+message(STATUS "TABLE_SIZE:           ${TABLE_SIZE}")
+message(STATUS "HASHMAP_CACHE_BACKEND:${HASHMAP_CACHE_BACKEND}")
