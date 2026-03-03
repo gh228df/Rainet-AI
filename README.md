@@ -14,10 +14,10 @@ This project is written in **C++** and relies on the following external librarie
   Specifically: `#include <boost/unordered/unordered_flat_map.hpp>`  
   Provides a high-performance, flat hash map implementation used for transposition tables / caching in the search algorithm.
 
-- **wyhash**  
-  Due to 'Unlicensed' License directly embedded in the project  
+- **rapidhash**  
+  Provides a high quality hash at a good speed.
 
-  Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)
+Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)
 
 ## Integration
 
@@ -61,30 +61,26 @@ struct field_t
     uint64_t is_link_mask; // link cards mask
     uint64_t is_boosted_mask; // boosted cards mask
 
-    uint8_t fir_link : 4; // captured links by the first player
-    uint8_t sec_link : 4; // captured viruses by the first player
-    uint8_t fir_virus : 4; // captured links by the second player
-    uint8_t sec_virus : 4; // captured viruses by the second player
-
-    uint8_t is_boost_available_fir : 1;
-    uint8_t is_boost_available_sec : 1;
-    uint8_t is_checker_available_fir : 1;
-    uint8_t is_checker_available_sec : 1;
-    uint8_t is_swap_available_fir : 1;
-    uint8_t is_swap_available_sec : 1;
-    uint8_t is_firewall_available_fir : 1;
-    uint8_t is_firewall_available_sec : 1;
-
     uint8_t forward_adv_fir; // card advancement for the first player
     uint8_t forward_adv_sec; // card advancement for the second player
 
     // location for the firewalls (mask is computed as 1ULL << firewall_var)
     uint8_t firewall_fir; 
     uint8_t firewall_sec;
+
+    uint8_t fir_link : 4; // captured links by the first player
+    uint8_t sec_link : 4; // captured viruses by the first player
+    uint8_t fir_virus : 4; // captured links by the second player
+    uint8_t sec_virus : 4; // captured viruses by the second player
+
+    uint8_t is_checker_available_fir : 1;
+    uint8_t is_checker_available_sec : 1;
+    uint8_t is_swap_available_fir : 1;
+    uint8_t is_swap_available_sec : 1;
 }
 ```
 
-The struct is currently ~40 bytes. With some clever packing (e.g. representing boosted cards with uint8_t's like firewalls), it could shrink to ~32–33 bytes, but it would require more manual bit-twiddling.
+The struct is currently ~40 bytes. With some clever packing (e.g. representing boosted cards with uint8_t's like firewalls), it could shrink to ~32–33 bytes, but it would require more manual bit-twiddling (and doesn't worth it speedwise).
 We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations quickly.
 
 **Position Evaluation**
@@ -92,14 +88,14 @@ We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations 
 
 This is the heart of the AI, it decides what "good" looks like. Current version:
 
-1024 * 2<sup>captured_links_player_one</sup> - 2048 * 2<sup>captured_viruses_player_one</sup> - 1024 * 2<sup>captured_links_player_two</sup> + 2048 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 2048 * is_swap_available_player_one - 2048 * is_swap_available_player_two
+1024 * 2<sup>captured_links_player_one</sup> - 512 * 2<sup>captured_viruses_player_one</sup> - 1024 * 2<sup>captured_links_player_two</sup> + 512 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 2048 * is_swap_available_player_one - 2048 * is_swap_available_player_two
 
 **Player One** (fir) maximizes the score  
 **Player Two** (sec) minimizes it
 
 ### Key Points
 - Capturing **Link** cards is rewarded exponentially.
-- Capturing **Virus** cards is punished exponentially.
+- Capturing **Virus** cards is punished exponentially (though defending links is prioritized).
 - The **swap** power-up gets a huge bonus because it's often decisive in the late game, the AI avoids wasting it on small edges.
 - Advancement (how far your pieces have moved forward) encourages aggressive play.
 
@@ -107,12 +103,10 @@ This evaluation function can be improved upon, and suggestions are welcome.
 
 **Search Implementations**
 ---------------------
-In main.cpp you'll find two minimax variants:
+In rnab.hpp you'll find two minimax variants:
 
-- **minimax_single_main** — classic single-threaded version (what the AI actually uses right now)
-- **minimax_main** — multi-threaded attempt to explore moves faster
-
-Surprisingly, the parallel version often uses way more memory and isn't consistently faster, so single-threaded usually wins for now.
+- **minimax_iteration_main** — iterates up to a certain point, gathering move information and scores until the time runs out (the one currently used)
+- **minimax_main** — classic single-threaded version
 
 **Future Development**
 ---------------------
@@ -121,7 +115,7 @@ Surprisingly, the parallel version often uses way more memory and isn't consiste
 * Smarter caching / lower memory usage
 * Proper handling of revealed cards and partial knowledge
 * A much nicer frontend / GUI (the current one is very bare-bones)
-* Implementing more advanced minimax tricks (aspiration windows, iterative deepening refinements, etc.)
+* Implementing more advanced minimax tricks (iterative deepening refinements, etc.)
 
 **Contribution**
 ---------------------
