@@ -1,3 +1,11 @@
+# Flags
+
+- `RNAB_DEBUG` - print verbose debug information (little to no runtime cost)
+- `ENABLE_STRIP` - enable -s flag
+- `BUILD_LIBRARY` - build librnab only
+- `HASHMAP_CACHE_BACKEND` - use hashmap as the backend over a flat map (often good 2-50 times faster so it is enabled by default)
+- `-DBRANCH_DEBUG` - track the cutoffs for each of the minimax entries (up to 2 times slower when enabled, only enable if you're willing to explore & improve the move order)
+
 # Windows
 
 ## Default build with simple GUI
