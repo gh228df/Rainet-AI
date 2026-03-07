@@ -3,7 +3,6 @@
 - `RNAB_DEBUG` - print verbose debug information (little to no runtime cost)
 - `ENABLE_STRIP` - enable -s flag
 - `BUILD_LIBRARY` - build librnab only
-- `HASHMAP_CACHE_BACKEND` - use hashmap as the backend over a flat map (often good 2-50 times faster so it is enabled by default)
 - `-DBRANCH_DEBUG` - track the cutoffs for each of the minimax entries (up to 2 times slower when enabled, only enable if you're willing to explore & improve the move order)
 
 # Windows
@@ -18,7 +17,7 @@ cmake --build build
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
 cmake --build build
 ```
-(rnab_export.hpp contains exported functions)
+(rnab_export.h contains exported functions)
 
 # Android (librnab.so)
 
@@ -34,7 +33,7 @@ mkdir build && cd build
 cmake .. -G "Ninja" -DCMAKE_TOOLCHAIN_FILE=%ANDROID_NDK_HOME%/build/cmake/android.toolchain.cmake -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-21 -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release
 ninja
 ```
-(rnab_export.hpp contains exported functions)
+(rnab_export.h contains exported functions)
 
 # Linux
 
@@ -50,19 +49,21 @@ The easiest and most reliable way to get a maximally compatible binary is to bui
 ### Linux x86-64
 
 ```
-docker run -it --rm -v $(pwd):/src -w /src alpine:latest sh
-apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
-cmake --build build
+docker run -it --rm -v $(pwd):/src -w /src alpine:edge sh -c '
+  apk add --no-cache gcc g++ cmake ninja &&
+  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON &&
+  cmake --build build
+'
 ```
 
 ### Linux x86
 
 ```
-docker run -it --rm -v $(pwd):/src -w /src i386/alpine:latest sh
-apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON
-cmake --build build
+docker run -it --rm -v $(pwd):/src -w /src i386/alpine:edge sh -c '
+  apk add --no-cache gcc g++ cmake ninja &&
+  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON &&
+  cmake --build build
+'
 ```
 
 ### Linux ARM64 crosscompile on x86-64
@@ -75,11 +76,28 @@ docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
 sudo docker run --rm --platform linux/arm64 \
   -v $(pwd):/src -w /src \
-  arm64v8/alpine:latest sh -c '
-    apk add --no-cache clang lld cmake ninja musl-dev git python3 linux-headers &&
+  arm64v8/alpine:edge sh -c '
+    apk add --no-cache gcc g++ cmake ninja &&
     cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON &&
     cmake --build build
   '
 ```
 
-(rnab_export.hpp contains exported functions)
+### Linux ARMv7 crosscompile on x86-64
+
+```
+sudo apt update
+sudo apt install -y qemu-user-static binfmt-support # ensure we got qemu installed
+
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+sudo docker run --rm --platform linux/arm/v7 \
+  -v $(pwd):/src -w /src \
+  arm32v7/alpine:edge sh -c '
+    apk add --no-cache gcc g++ cmake ninja &&
+    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY=ON &&
+    cmake --build build
+  '
+```
+
+(rnab_export.h contains exported functions)
