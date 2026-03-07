@@ -5,14 +5,10 @@ This project is my attempt to build a strong AI player for **Rai-Net Access Batt
 
 ## Project Dependencies
 
-This project is written in **C++** and relies on the following external libraries:
+This project is written in **C** and relies on the following external libraries:
 
 - **GLFW 3** (`libglfw3`)  
-  Used for creating the window, handling input, and rendering the simple graphical interface / board visualization.
-
-- **Boost.Unordered**  
-  Specifically: `#include <boost/unordered/unordered_flat_map.hpp>`  
-  Provides a high-performance, flat hash map implementation used for transposition tables / caching in the search algorithm.
+  When simple GUI is selected, used for creating the window, handling input, and rendering the simple graphical interface / board visualization.
 
 - **rapidhash**  
   Provides a high quality hash at a good speed.
@@ -21,14 +17,14 @@ Compilation instructions can be found at: [Compilation Guide](docs/compile_instr
 
 ## Integration
 
-This project can be compiled into a standalone library which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
+This project can be compiled into a standalone library (just 80KB for x86-64) which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
 
 ## Current Limitations
 
 This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. Here's what it's currently not great at:
 
 - **Firewall** and **404-Not-Found (swap)** power-ups  
-  Because of the explosion in branching factor, the AI only looks ahead a limited number of moves (`COSTLY_POWERUPS_LOOKAHEAD`) when both players have these. Also, firewall is only ever applied to cover **Link cards** right now.
+  Firewall is only ever applied to cover **Link cards** or a **Boosted Virus** right now.
 
 - **Revealed / covered card knowledge**  
   The engine doesn't yet factor in which cards have been revealed or are known to be covered.
@@ -46,7 +42,7 @@ You can set the search depth anywhere from **6** to **16** plies.
 Deeper = stronger play, but also much more memory usage (thanks to caching/transposition tables).
 
 **Sweet spot for most machines:** **10–14**  
-Anything beyond 14 usually requires serious RAM and patience.
+Anything beyond 14 usually requires serious patience.
 
 **Position Representation**
 -------------------------
@@ -73,14 +69,11 @@ struct field_t
     uint8_t fir_virus : 4; // captured links by the second player
     uint8_t sec_virus : 4; // captured viruses by the second player
 
-    uint8_t is_checker_available_fir : 1;
-    uint8_t is_checker_available_sec : 1;
-    uint8_t is_swap_available_fir : 1;
-    uint8_t is_swap_available_sec : 1;
+    uint8_t is_swap_available_fir; // flag to track swap availability for the first player
+    uint8_t is_swap_available_sec; // flag to track swap availability for the second player
 }
 ```
 
-The struct is currently ~40 bytes. With some clever packing (e.g. representing boosted cards with uint8_t's like firewalls), it could shrink to ~32–33 bytes, but it would require more manual bit-twiddling (and doesn't worth it speedwise).
 We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations quickly.
 
 **Position Evaluation**
@@ -111,7 +104,7 @@ In rnab.hpp you'll find two minimax variants:
 **Future Development**
 ---------------------
 
-* Better move ordering & pruning to reach deeper searches
+* Better move ordering & pruning to reach deeper searches (it looks like the biggest bottleneck is the evaluation function which doesn't generate many cutoffs)
 * Smarter caching / lower memory usage
 * Proper handling of revealed cards and partial knowledge
 * A much nicer frontend / GUI (the current one is very bare-bones)
