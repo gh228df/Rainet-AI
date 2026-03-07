@@ -27,13 +27,49 @@
  *   - rapidhash source repository: https://github.com/Nicoshev/rapidhash
  */
 
-inline __attribute__((__always_inline__)) uint64_t rapidhashNano(const void *__restrict__ key, uint64_t seed)
+static inline __attribute__((always_inline)) void rapid_mum(uint64_t *A, uint64_t *B)
 {
-  __uint128_t r;
-  r = (__uint128_t)(seed ^ 0x4b33a62ed433d4a3ull) * (__uint128_t)0x8bb84b93962eacc9ull;
-  r = (__uint128_t)(*(uint64_t *)((uint8_t *)key + 0) ^ 0x4b33a62ed433d4a3ull) * (__uint128_t)(*(uint64_t *)((uint8_t *)key + 8) ^ (seed ^ ((uint64_t)r ^ (uint64_t)(r >> 64))));
-  r = (__uint128_t)(*(uint64_t *)((uint8_t *)key + 16) ^ 0x4b33a62ed433d4a3ull) * (__uint128_t)(*(uint64_t *)((uint8_t *)key + 24) ^ ((uint64_t)r ^ (uint64_t)(r >> 64)));
-  r = (__uint128_t)(*(uint64_t *)((uint8_t *)key + 24) ^ 0x8bb84b93962eacc9ull) * (__uint128_t)(*(uint64_t *)((uint8_t *)key + 32) ^ ((uint64_t)r ^ (uint64_t)(r >> 64)));
-  r = (__uint128_t)(((uint64_t)r) ^ 0xaaaaaaaaaaaaaaaaull) * (__uint128_t)((uint64_t)(r >> 64) ^ 0x8bb84b93962eacc9ull ^ 40ULL);
-  return (uint64_t)r ^ (uint64_t)(r >> 64);
+#if defined(__SIZEOF_INT128__)
+  __uint128_t r = *A;
+  r *= *B;
+  *A = (uint64_t)r;
+  *B = (uint64_t)(r >> 64);
+#elif defined(_MSC_VER) && (defined(_WIN64) || defined(_M_HYBRID_CHPE_ARM64))
+#if defined(_M_X64)
+  *A = _umul128(*A, *B, B);
+#else
+  uint64_t c = __umulh(*A, *B);
+  *A = *A * *B;
+  *B = c;
+#endif
+#else
+  uint64_t ha = *A >> 32, hb = *B >> 32, la = (uint32_t)*A, lb = (uint32_t)*B;
+  uint64_t rh = ha * hb, rm0 = ha * lb, rm1 = hb * la, rl = la * lb, t = rl + (rm0 << 32), c = t < rl;
+  uint64_t lo = t + (rm1 << 32);
+  c += lo < t;
+  uint64_t hi = rh + (rm0 >> 32) + (rm1 >> 32) + c;
+  *A = lo;
+  *B = hi;
+#endif
+}
+
+static inline __attribute__((always_inline)) uint64_t rapid_mix(uint64_t A, uint64_t B)
+{
+  rapid_mum(&A, &B);
+  return A ^ B;
+}
+
+static inline __attribute__((always_inline)) uint64_t rapidhashNano(const void *__restrict__ key, uint64_t seed)
+{
+  seed ^= rapid_mix(seed ^ 0x4b33a62ed433d4a3ULL, 0x8bb84b93962eacc9ULL);
+  seed = rapid_mix(*(uint64_t *)((uint8_t *)key + 0) ^ 0x4b33a62ed433d4a3ULL, *(uint64_t *)((uint8_t *)key + 8) ^ seed);
+  seed = rapid_mix(*(uint64_t *)((uint8_t *)key + 16) ^ 0x4b33a62ed433d4a3ULL, *(uint64_t *)((uint8_t *)key + 24) ^ seed);
+
+  uint64_t a = *(uint64_t *)((uint8_t *)key + 24) ^ 40;
+  uint64_t b = *(uint64_t *)((uint8_t *)key + 32);
+  
+  a ^= 0x8bb84b93962eacc9ULL;
+  b ^= seed;
+  rapid_mum(&a, &b);
+  return rapid_mix(a ^ 0xaaaaaaaaaaaaaaaaULL, b ^ 0x8bb84b93962eacc9ULL ^ 40);
 }
