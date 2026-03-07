@@ -12,19 +12,6 @@ option(RNAB_DEBUG           "Enable RNAB debug mode"                        OFF)
 option(ENABLE_STRIP         "Strip symbols from binary (-s)"                ON)
 option(BUILD_LIBRARY        "Build as shared library instead of executable" OFF)
 
-include(CheckCSourceCompiles)
-
-check_c_source_compiles("
-    int main() {
-        __uint128_t x = 0;
-        return 0;
-    }
-" HAVE_UINT128)
-
-if(NOT HAVE_UINT128)
-    message(FATAL_ERROR "Compiler does not support __uint128_t")
-endif()
-
 set(TABLE_BITS 25 CACHE STRING "Transposition table size as power-of-two bits")
 
 # Validate: must be integer
