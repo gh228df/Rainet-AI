@@ -12,7 +12,7 @@ option(RNAB_DEBUG           "Enable RNAB debug mode"                        OFF)
 option(ENABLE_STRIP         "Strip symbols from binary (-s)"                ON)
 option(BUILD_LIBRARY        "Build as shared library instead of executable" OFF)
 
-set(TABLE_BITS 25 CACHE STRING "Transposition table size as power-of-two bits")
+set(TABLE_BITS 22 CACHE STRING "Transposition table size as power-of-two bits")
 
 # Validate: must be integer
 if(NOT TABLE_BITS MATCHES "^[0-9]+$")
@@ -47,7 +47,7 @@ endif()
 
 target_include_directories(rnab PRIVATE rnab_engine)
 target_compile_features(rnab PRIVATE c_std_17)
-target_compile_options(rnab PRIVATE -O3)
+target_compile_options(rnab PRIVATE -O3 -ffunction-sections -fdata-sections -fno-stack-protector -fno-exceptions -fomit-frame-pointer -fno-unwind-tables -fno-asynchronous-unwind-tables)
 target_compile_definitions(rnab PRIVATE TABLE_SIZE=${TABLE_SIZE})
 set_target_properties(rnab PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -65,7 +65,6 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     target_link_options(rnab PRIVATE -fuse-ld=lld -flto)
 endif()
 
-target_compile_options(rnab PRIVATE -ffunction-sections -fdata-sections -fno-stack-protector -fomit-frame-pointer -fno-unwind-tables -fno-asynchronous-unwind-tables) 
 target_link_options(rnab PRIVATE -Wl,--gc-sections)
 
 # Static linking rules per platform:
@@ -76,11 +75,11 @@ if(WIN32)
     target_link_options(rnab PRIVATE -static -static-libgcc)
     message(STATUS "Static linking: full (Windows)")
 elseif(ANDROID)
-    target_link_options(rnab PRIVATE -static-libgcc)
+    target_link_options(rnab PRIVATE -static-libgcc -static)
     message(STATUS "Static linking: libgcc only (Android)")
 else() # Linux
     if(BUILD_LIBRARY)
-        target_link_options(rnab PRIVATE -nostdlib)
+        target_link_options(rnab PRIVATE -nostdlib -static)
         message(STATUS "Static linking: full (Linux library)")
     else()
         message(STATUS "Static linking: none (Linux executable)")
