@@ -30,13 +30,11 @@ struct generic_representation {
     int32_t player_second_captured_viruses_num;
 
     // Power-up availability flags (0/1)
-    int32_t player_first_is_virus_checker_available;
-    int32_t player_second_is_virus_checker_available;
     int32_t player_first_is_404_not_found_available;
     int32_t player_second_is_404_not_found_available;
 };
 ```
-(72 bytes in total, make sure all the types match across the languages and there is exactly 72 bytes at the memory address)
+(64 bytes in total, make sure all the types match across the languages and there is exactly 64 bytes at the memory address)
 
 ### Position Encoding
 
@@ -95,7 +93,4 @@ struct generic_representation {
   • `0` = first player to move  
   • `1` = second player to move
 
-> **Important:** The function includes several runtime assertions that validate input follows game rules. Invalid data will trigger asserts.
-
-
-
+> **Important:** The function includes several runtime assertions that validate input to follow game rules, do not disable those unless you're 100% sure you generate reliable data.
