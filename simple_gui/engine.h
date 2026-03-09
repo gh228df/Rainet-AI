@@ -563,35 +563,15 @@ static void cursor_position_callback(GLFWwindow *window, double xpos, double ypo
 
 void init(const char *win_name)
 {
-#ifdef __linux__
-    button_buf = (button_t *)mmap(NULL, (1ULL << 32), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-    if (button_buf == MAP_FAILED)
-    {
-        fprintf(stderr, "OOM\n");
-        exit(1);
-    }
-#else
-    button_buf = (button_t *)VirtualAlloc(NULL, (1ULL << 32), MEM_RESERVE, PAGE_NOACCESS);
+    button_buf = (button_t *)malloc(128 * sizeof(button_t));
 
     if (button_buf == NULL)
     {
         fprintf(stderr, "OOM\n");
         exit(1);
     }
-#endif
 
-#ifdef __linux__
-    if (mprotect(button_buf, ROUND_UP_TO_MEMORY_PAGE(4096 * sizeof(button_t)), PROT_READ | PROT_WRITE) != 0)
-#else
-    if (VirtualAlloc(button_buf, ROUND_UP_TO_MEMORY_PAGE(4096 * sizeof(button_t)), MEM_COMMIT, PAGE_READWRITE) == NULL)
-#endif
-    {
-        fprintf(stderr, "OOM\n");
-        exit(1);
-    }
-
-    button_buf_capacity = 4096;
+    button_buf_capacity = 128;
 
     if (glfwInit() == GLFW_FALSE)
     {
@@ -659,6 +639,8 @@ void init(const char *win_name)
         exit(1);
     }
 #else
+    QueryPerformanceFrequency(&_qpf_freq);
+
     glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
     glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
     glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
@@ -1356,18 +1338,14 @@ button_t *button_alloc()
 {
     if (button_buf_size == button_buf_capacity)
     {
-        uint64_t protected_space = ROUND_UP_TO_MEMORY_PAGE(button_buf_capacity * sizeof(button_t));
-        uint64_t last_mem_page = ROUND_UP_TO_MEMORY_PAGE((button_buf_capacity << 1) * sizeof(button_t));
-        uint64_t want_space = last_mem_page - protected_space;
-#ifdef __linux__
-        if (mprotect((uint8_t *)button_buf + protected_space, want_space, PROT_READ | PROT_WRITE) != 0)
-#else
-        if (VirtualAlloc((uint8_t *)button_buf + protected_space, want_space, MEM_COMMIT, PAGE_READWRITE) == NULL)
-#endif
+        void *new_ptr = realloc(button_buf, (button_buf_capacity << 1) * sizeof(button_t));
+
+        if (new_ptr == NULL)
         {
             fprintf(stderr, "OOM\n");
             exit(1);
         }
+        
         button_buf_capacity <<= 1;
     }
     memset(&button_buf[button_buf_size], 0, sizeof(button_t));
