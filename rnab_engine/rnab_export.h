@@ -8,24 +8,21 @@
 
 #include <stdint.h>
 
-extern "C"
+typedef struct
 {
-    typedef struct
-    {
-        uint64_t player_first_card_mask;
-        uint64_t player_second_card_mask;
-        uint64_t link_card_mask;
-        int32_t player_first_boosted_cell;
-        int32_t player_second_boosted_cell;
-        int32_t player_first_firewalled_cell;
-        int32_t player_second_firewalled_cell;
-        int32_t player_first_captured_links_num;
-        int32_t player_first_captured_viruses_num;
-        int32_t player_second_captured_links_num;
-        int32_t player_second_captured_viruses_num;
-        int32_t player_first_is_404_not_found_available;
-        int32_t player_second_is_404_not_found_available;
-    } generic_representation;
+    uint64_t player_first_card_mask;
+    uint64_t player_second_card_mask;
+    uint64_t link_card_mask;
+    int32_t player_first_boosted_cell;
+    int32_t player_second_boosted_cell;
+    int32_t player_first_firewalled_cell;
+    int32_t player_second_firewalled_cell;
+    int32_t player_first_captured_links_num;
+    int32_t player_first_captured_viruses_num;
+    int32_t player_second_captured_links_num;
+    int32_t player_second_captured_viruses_num;
+    int32_t player_first_is_404_not_found_available;
+    int32_t player_second_is_404_not_found_available;
+} generic_representation;
 
-    EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player);
-}
+EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player);
