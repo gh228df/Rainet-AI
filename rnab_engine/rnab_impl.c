@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-#include <time.h>
 #include <stdint.h>
 #include <assert.h>
 #include <stdio.h>
@@ -7,16 +6,14 @@
 #include <stdbool.h>
 #include "../third_party/rapidhash.h"
 
-#ifdef __AVX2__
-#include <immintrin.h>
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#else
+#include <time.h>
 #endif
 
-#if defined(__BMI__)
-#define clear_lowest_set_bit(x, var) (x) = _blsr_u64(x)
-#define clear_highest_set_bit(x, var) ((x) ^= (var))
-#else
-#define clear_lowest_set_bit(x, var) ((x) ^= (var))
-#define clear_highest_set_bit(x, var) ((x) ^= (var))
+#ifdef __AVX2__
+#include <immintrin.h>
 #endif
 
 #ifndef GAME_CONSTANTS
@@ -136,7 +133,6 @@ typedef struct
 {
     field_t best_field;
     int evaluation;
-    bool has_timed_out;
 } minimax_main_result_t;
 
 typedef struct
@@ -162,6 +158,157 @@ typedef struct
 #define TABLE_SIZE 1024
 #endif
 
+#if defined(__BMI__)
+// #define clear_lowest_set_bit(x, var) (x) = _blsr_u64(x) // it is slower???
+// #define clear_highest_set_bit(x, var) ((x) ^= (var))
+#define clear_lowest_set_bit(x, var) ((x) &= (x - 1))
+#define clear_highest_set_bit(x, var) ((x) ^= (var))
+#else
+#define clear_lowest_set_bit(x, var) ((x) &= (x - 1))
+#define clear_highest_set_bit(x, var) ((x) ^= (var))
+#endif
+
+#define extract_lsb(x) (x & -x)
+
+#if __SIZEOF_POINTER__ == 8
+
+#define get_ctz(x) __builtin_ctzll(x)
+#define uint64_div(a, b) (a / b)
+
+#else
+
+static inline __attribute__((always_inline)) int get_ctz(uint64_t x)
+{
+    uint32_t lo = (uint32_t)x;
+    uint32_t hi = (uint32_t)(x >> 32);
+
+    int low = __builtin_ctz(lo);
+    int high = 32 + __builtin_ctz(hi);
+
+    return (lo == 0) ? high : low;
+}
+
+static uint64_t uint64_div(uint64_t a, uint64_t d)
+{
+    uint64_t remainder = 0;
+    uint64_t carry = 0;
+
+    for (unsigned sr = 64; sr > 0; --sr)
+    {
+        remainder = (remainder << 1) | (a >> 63);
+        a = (a << 1) | carry;
+        const uint64_t s = (uint64_t)(d - remainder - 1) >> 63;
+        carry = s & 1;
+        remainder -= d & (-(uint64_t)s);
+    }
+
+    return (a << 1) | carry;
+}
+
+#endif
+
+#if defined(_WIN32) || defined(_WIN64)
+
+static LARGE_INTEGER _qpf_freq;
+
+BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+    (void)hinstDLL;
+    (void)lpvReserved;
+
+    if (fdwReason == DLL_PROCESS_ATTACH)
+    {
+        QueryPerformanceFrequency(&_qpf_freq);
+    }
+
+    return TRUE;
+}
+
+#define TIME_TYPE LARGE_INTEGER
+
+#define get_time(time_var) \
+    QueryPerformanceCounter(&(time_var))
+
+#define get_time_diff_millis(stop_var, start_var) \
+    uint64_div(((stop_var).QuadPart - (start_var).QuadPart) * 1000ULL, _qpf_freq.QuadPart)
+
+#define get_time_diff_micros(stop_var, start_var) \
+    uint64_div(((stop_var).QuadPart - (start_var).QuadPart) * 1000000ULL, _qpf_freq.QuadPart)
+
+#else
+
+#define TIME_TYPE struct timespec
+
+#if defined(__aarch64__)
+
+#define get_time(time_var)                                         \
+    do                                                             \
+    {                                                              \
+        register long _r0 __asm__("x0") = 1;                       \
+        register struct timespec *_r1 __asm__("x1") = &(time_var); \
+        register long _r8 __asm__("x8") = 113;                     \
+        __asm__ volatile(                                          \
+            "svc #0\n"                                             \
+            : "+r"(_r0)                                            \
+            : "r"(_r1), "r"(_r8)                                   \
+            : "memory");                                           \
+    } while (0)
+
+#elif defined(__arm__)
+
+#define get_time(time_var)                                      \
+    do                                                          \
+    {                                                           \
+        register int r0 __asm__("r0") = 1;                      \
+        register struct timespec *r1 __asm__("r1") = &time_var; \
+        register int r7 __asm__("r7") = 263;                    \
+        __asm__ volatile(                                       \
+            "swi #0\n"                                          \
+            : "+r"(r0) : "r"(r1), "r"(r7) : "memory");          \
+    } while (0)
+
+#elif defined(__i386__)
+
+#define get_time(time_var)                                           \
+    do                                                               \
+    {                                                                \
+        register long _eax __asm__("eax") = 265;                     \
+        register long _ebx __asm__("ebx") = 1;                       \
+        register struct timespec *_ecx __asm__("ecx") = &(time_var); \
+        __asm__ volatile(                                            \
+            "int $0x80\n"                                            \
+            : "+r"(_eax)                                             \
+            : "r"(_ebx), "r"(_ecx)                                   \
+            : "memory");                                             \
+    } while (0)
+
+#elif defined(__x86_64__)
+
+#define get_time(time_var)                                           \
+    do                                                               \
+    {                                                                \
+        register long _rax __asm__("rax") = 228;                     \
+        register long _rdi __asm__("rdi") = 1;                       \
+        register struct timespec *_rsi __asm__("rsi") = &(time_var); \
+        __asm__ volatile(                                            \
+            "syscall\n"                                              \
+            : "+r"(_rax)                                             \
+            : "r"(_rdi), "r"(_rsi)                                   \
+            : "rcx", "r11", "memory");                               \
+    } while (0)
+
+#else
+
+#warning "Defaulting to clock_gettime"
+#define get_time(time_var) clock_gettime(CLOCK_MONOTONIC, &time_var)
+
+#endif
+
+#define get_time_diff_millis(stop_var, start_var) ((stop_var.tv_sec * 1000 + stop_var.tv_nsec / 1000000) - (start_var.tv_sec * 1000 + start_var.tv_nsec / 1000000))
+#define get_time_diff_micros(stop_var, start_var) ((stop_var.tv_sec * 1000000 + stop_var.tv_nsec / 1000) - (start_var.tv_sec * 1000000 + start_var.tv_nsec / 1000))
+
+#endif
+
 #define CLEAR_TT()                               \
     __builtin_memset(tt_fir, 0, sizeof(tt_fir)); \
     __builtin_memset(tt_sec, 0, sizeof(tt_sec))
@@ -171,8 +318,8 @@ static const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 
 static int cur_search_depth = 0;
 static int64_t rec_counter = 0;
 
-static tt_bucket_t tt_fir[TABLE_SIZE] __attribute__((aligned(4096))) = {0};
-static tt_bucket_t tt_sec[TABLE_SIZE] __attribute__((aligned(4096))) = {0};
+static tt_bucket_t tt_fir[TABLE_SIZE] __attribute__((aligned(4096), section(".bss")));
+static tt_bucket_t tt_sec[TABLE_SIZE] __attribute__((aligned(4096), section(".bss")));
 
 #ifdef BRANCH_DEBUG
 cutoff_tracker_t cutoff_tracker[MAX_BRANCHES] = {0};
@@ -195,10 +342,10 @@ static uint64_t reverse_mask(uint64_t mask)
 
     while (mask)
     {
-        const int cur_pos = __builtin_ctzll(mask);
-        const uint64_t cur_mask = 1ULL << cur_pos;
+        const int cur_pos = __builtin_clzll(mask);
+        const uint64_t cur_mask = 1ULL << (63 - cur_pos);
 
-        res |= (1ULL << (63 - cur_pos));
+        res |= (1ULL << cur_pos);
 
         mask ^= cur_mask;
     }
@@ -355,7 +502,7 @@ static inline __attribute__((always_inline)) int field_evaluate(const field_t *_
         {                                                                                     \
             field_t temp_field = *position;                                                   \
                                                                                               \
-            int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                            \
+            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
             temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                      \
             temp_field.forward_adv_fir += forward_adv;                                        \
             if (is_boosted)                                                                   \
@@ -387,7 +534,7 @@ static inline __attribute__((always_inline)) int field_evaluate(const field_t *_
         {                                                                                     \
             field_t temp_field = *position;                                                   \
                                                                                               \
-            int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                            \
+            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
             temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                      \
             temp_field.forward_adv_fir += forward_adv;                                        \
             if (is_boosted)                                                                   \
@@ -443,8 +590,8 @@ static inline __attribute__((always_inline)) int field_evaluate(const field_t *_
         {                                                                                     \
             field_t temp_field = *position;                                                   \
                                                                                               \
-            int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                            \
-            temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                \
+            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
+            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(new_pos_coord) >> 3);     \
             temp_field.forward_adv_sec += forward_adv;                                        \
             if (is_boosted)                                                                   \
             {                                                                                 \
@@ -475,8 +622,8 @@ static inline __attribute__((always_inline)) int field_evaluate(const field_t *_
         {                                                                                     \
             field_t temp_field = *position;                                                   \
                                                                                               \
-            int new_pos_coord = __builtin_ctzll(new_pos_bitboard);                            \
-            temp_field.forward_adv_fir -= (uint8_t)(7 - (new_pos_coord >> 3));                \
+            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
+            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(new_pos_coord) >> 3);     \
             temp_field.forward_adv_sec += forward_adv;                                        \
             if (is_boosted)                                                                   \
             {                                                                                 \
@@ -525,20 +672,21 @@ static inline __attribute__((always_inline)) int field_evaluate(const field_t *_
     }
 
 #if defined(__clang__)
-static __attribute__((minsize, cold)) possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
+static __attribute__((cold)) possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
 #elif defined(__GNUC__)
 static __attribute__((optimize("Os"), cold)) possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
 #else
 static possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
 #endif
 {
+#define WRITE_MOVE()                               \
+    do                                             \
+    {                                              \
+        res.moves[res.moves_count++] = temp_field; \
+    } while (0)
+
     possible_moves_t res;
     res.moves_count = 0;
-
-#define WRITE_MOVE()                      \
-    int cached_count = res.moves_count;   \
-    res.moves[cached_count] = temp_field; \
-    res.moves_count = cached_count + 1;
 
     const uint64_t firmask = position->is_fir_mask, secmask = position->is_sec_mask;
 
@@ -556,7 +704,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_fir -= (uint8_t)(7 - (__builtin_ctzll(8ULL) >> 3));
+            temp_field.forward_adv_fir -= (uint8_t)7;
             temp_field.is_boosted_mask &= ~8ULL;
             temp_field.is_fir_mask &= ~8ULL;
             temp_field.is_link_mask &= ~8ULL;
@@ -568,7 +716,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_fir -= (uint8_t)(7 - (__builtin_ctzll(16ULL) >> 3));
+            temp_field.forward_adv_fir -= (uint8_t)7;
             temp_field.is_boosted_mask &= ~16ULL;
             temp_field.is_fir_mask &= ~16ULL;
             temp_field.is_link_mask &= ~16ULL;
@@ -583,7 +731,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_fir -= (uint8_t)(7 - (__builtin_ctzll(cur_boosted_mask) >> 3));
+            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(cur_boosted_mask) >> 3);
             temp_field.is_boosted_mask &= ~cur_boosted_mask;
             temp_field.is_fir_mask &= ~cur_boosted_mask;
             temp_field.is_link_mask &= ~cur_boosted_mask;
@@ -598,7 +746,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
             while (temp)
             {
-                const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
+                const uint64_t pos = extract_lsb(temp); // back -> front
 
                 field_t temp_field = *position;
 
@@ -837,7 +985,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
         while (unboosted_cards_mask)
         {
-            const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
             const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
 
             if (cur_pos_bitboard & (legal_mask << 8))
@@ -883,7 +1031,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
         while (unboosted_cards_mask)
         {
-            const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
             const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
 
             if (cur_pos_bitboard & (legal_mask << 8))
@@ -929,7 +1077,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
         while (unboosted_cards_mask)
         {
-            const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
 
             if (cur_pos_bitboard & (free_mask << 8))
             {
@@ -974,7 +1122,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
         while (unboosted_cards_mask)
         {
-            const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
 
             if (cur_pos_bitboard & (free_mask << 8))
             {
@@ -1021,7 +1169,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
             while (temp)
             {
-                const int bit_pos = __builtin_ctzll(temp);
+                const int bit_pos = get_ctz(temp);
                 const uint64_t pos = (1ULL << bit_pos); // front -> back
 
                 field_t temp_field = *position;
@@ -1037,7 +1185,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
             if (temp)
             {
-                const int bit_pos = __builtin_ctzll(temp);
+                const int bit_pos = get_ctz(temp);
 
                 field_t temp_field = *position;
 
@@ -1061,13 +1209,13 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
             while (link_mask)
             {
-                const uint64_t link_pos = (1ULL << __builtin_ctzll(link_mask)); // front -> back
+                const uint64_t link_pos = extract_lsb(link_mask); // front -> back
 
                 uint64_t virus_mask = fir_virus_mask;
 
                 while (virus_mask)
                 {
-                    const uint64_t virus_pos = (1ULL << __builtin_ctzll(virus_mask)); // front -> back
+                    const uint64_t virus_pos = extract_lsb(virus_mask); // front -> back
 
                     field_t temp_field = *position;
 
@@ -1089,7 +1237,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
             while (temp)
             {
-                const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
+                const uint64_t pos = extract_lsb(temp); // back -> front
 
                 field_t temp_field = *position;
 
@@ -1123,7 +1271,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_sec -= (uint8_t)(__builtin_ctzll(1152921504606846976ULL) >> 3);
+            temp_field.forward_adv_sec -= (uint8_t)7;
             temp_field.is_boosted_mask &= ~1152921504606846976ULL;
             temp_field.is_sec_mask &= ~1152921504606846976ULL;
             temp_field.is_link_mask &= ~1152921504606846976ULL;
@@ -1136,7 +1284,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_sec -= (uint8_t)(__builtin_ctzll(576460752303423488ULL) >> 3);
+            temp_field.forward_adv_sec -= (uint8_t)7;
             temp_field.is_boosted_mask &= ~576460752303423488ULL;
             temp_field.is_sec_mask &= ~576460752303423488ULL;
             temp_field.is_link_mask &= ~576460752303423488ULL;
@@ -1151,7 +1299,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
         {
             field_t temp_field = *position;
 
-            temp_field.forward_adv_sec -= (uint8_t)(__builtin_ctzll(cur_boosted_mask) >> 3);
+            temp_field.forward_adv_sec -= (uint8_t)(get_ctz(cur_boosted_mask) >> 3);
             temp_field.is_boosted_mask &= ~cur_boosted_mask;
             temp_field.is_sec_mask &= ~cur_boosted_mask;
             temp_field.is_link_mask &= ~cur_boosted_mask;
@@ -1694,7 +1842,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
             const field_t temp_field = {position->is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), position->is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                                       \
                                         ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (position->is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (position->is_link_mask ^ new_pos_bitboard) : ((position->is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
                                         ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                        \
-                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(__builtin_ctzll(new_pos_bitboard) >> 3),                                                                                                                                                                               \
+                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(get_ctz(new_pos_bitboard) >> 3),                                                                                                                                                                                       \
                                         position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                \
                                         position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                          \
                                         position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                             \
@@ -1715,7 +1863,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
             const field_t temp_field = {position->is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), position->is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                                       \
                                         ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
                                         ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                        \
-                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(__builtin_ctzll(new_pos_bitboard) >> 3),                                                                                                                                                                               \
+                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(get_ctz(new_pos_bitboard) >> 3),                                                                                                                                                                                       \
                                         position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                \
                                         position->fir_link, position->sec_link, position->fir_virus + 1, position->sec_virus,                                                                                                                                                                                                                          \
                                         position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                             \
@@ -1798,7 +1946,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
             const field_t temp_field = {position->is_fir_mask ^ new_pos_bitboard, position->is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                         \
                                         ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (position->is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (position->is_link_mask ^ new_pos_bitboard) : ((position->is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
                                         ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                          \
-                                        position->forward_adv_fir - (uint8_t)(7 - (__builtin_ctzll(new_pos_bitboard) >> 3)), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                           \
+                                        position->forward_adv_fir - (uint8_t)(__builtin_clzll(new_pos_bitboard) >> 3), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                                 \
                                         position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                  \
                                         position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                            \
                                         position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                               \
@@ -1819,7 +1967,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
             const field_t temp_field = {position->is_fir_mask ^ new_pos_bitboard, position->is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                         \
                                         ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
                                         ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                          \
-                                        position->forward_adv_fir - (uint8_t)(7 - (__builtin_ctzll(new_pos_bitboard) >> 3)), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                           \
+                                        position->forward_adv_fir - (uint8_t)(__builtin_clzll(new_pos_bitboard) >> 3), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                                 \
                                         position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                  \
                                         position->fir_link, position->sec_link, position->fir_virus, position->sec_virus + 1,                                                                                                                                                                                                                            \
                                         position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                               \
@@ -2074,7 +2222,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     if (__builtin_expect(fir_link_mask & 8ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask & ~8ULL, position->is_sec_mask, position->is_link_mask & ~8ULL, position->is_boosted_mask & ~8ULL,
-                                    position->forward_adv_fir - (uint8_t)(7 - (__builtin_ctzll(8ULL) >> 3)), position->forward_adv_sec,
+                                    position->forward_adv_fir - (uint8_t)7, position->forward_adv_sec,
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -2095,7 +2243,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     if (__builtin_expect(fir_link_mask & 16ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask & ~16ULL, position->is_sec_mask, position->is_link_mask & ~16ULL, position->is_boosted_mask & ~16ULL,
-                                    position->forward_adv_fir - (uint8_t)(7 - (__builtin_ctzll(16ULL) >> 3)), position->forward_adv_sec,
+                                    position->forward_adv_fir - (uint8_t)7, position->forward_adv_sec,
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -2116,7 +2264,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     if (__builtin_expect(((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask & ~cur_boosted_mask, position->is_sec_mask, position->is_link_mask & ~cur_boosted_mask, position->is_boosted_mask & ~cur_boosted_mask,
-                                    position->forward_adv_fir - (uint8_t)(7 - (__builtin_ctzll(cur_boosted_mask) >> 3)), position->forward_adv_sec,
+                                    position->forward_adv_fir - (uint8_t)(__builtin_clzll(cur_boosted_mask) >> 3), position->forward_adv_sec,
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -2140,7 +2288,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
         while (temp)
         {
-            const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
+            const uint64_t pos = extract_lsb(temp); // back -> front
 
             const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
                                         position->forward_adv_fir, position->forward_adv_sec,
@@ -2392,7 +2540,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
     while (unboosted_cards_mask)
     {
-        const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
         const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
 
         if (cur_pos_bitboard & (legal_mask << 8))
@@ -2440,7 +2588,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
     while (unboosted_cards_mask)
     {
-        const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
         const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
 
         if (cur_pos_bitboard & (legal_mask << 8))
@@ -2488,7 +2636,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
     while (unboosted_cards_mask)
     {
-        const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
 
         if (cur_pos_bitboard & (free_mask << 8))
         {
@@ -2535,7 +2683,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
     while (unboosted_cards_mask)
     {
-        const uint64_t cur_pos_bitboard = (1ULL << __builtin_ctzll(unboosted_cards_mask));
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
 
         if (cur_pos_bitboard & (free_mask << 8))
         {
@@ -2582,7 +2730,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
         while (temp)
         {
-            const int bit_pos = __builtin_ctzll(temp);
+            const int bit_pos = get_ctz(temp);
             const uint64_t pos = (1ULL << bit_pos); // front -> back
 
             const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
@@ -2620,7 +2768,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
                                         position->forward_adv_fir, position->forward_adv_sec,
-                                        (uint8_t)((__builtin_ctzll(temp) << 1) | 1), position->firewall_sec,
+                                        (uint8_t)((get_ctz(temp) << 1) | 1), position->firewall_sec,
                                         position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
                                         position->is_swap_available_fir, position->is_swap_available_sec};
 
@@ -2680,13 +2828,13 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
         while (link_mask)
         {
-            const uint64_t link_pos = (1ULL << __builtin_ctzll(link_mask)); // front -> back
+            const uint64_t link_pos = extract_lsb(link_mask); // front -> back
 
             uint64_t virus_mask = fir_virus_mask;
 
             while (virus_mask)
             {
-                const uint64_t virus_pos = (1ULL << __builtin_ctzll(virus_mask)); // front -> back
+                const uint64_t virus_pos = extract_lsb(virus_mask); // front -> back
 
                 const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask ^ (link_pos | virus_pos), position->is_boosted_mask,
                                             position->forward_adv_fir, position->forward_adv_sec,
@@ -2727,7 +2875,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
         while (temp)
         {
-            const uint64_t pos = (1ULL << __builtin_ctzll(temp)); // back -> front
+            const uint64_t pos = extract_lsb(temp); // back -> front
 
             const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
                                         position->forward_adv_fir, position->forward_adv_sec,
@@ -2925,7 +3073,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     if (__builtin_expect(sec_link_mask & 1152921504606846976ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~1152921504606846976ULL, position->is_link_mask & ~1152921504606846976ULL, position->is_boosted_mask & ~1152921504606846976ULL,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)(__builtin_ctzll(1152921504606846976ULL) >> 3),
+                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)7,
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -2946,7 +3094,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     if (__builtin_expect(sec_link_mask & 576460752303423488ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~576460752303423488ULL, position->is_link_mask & ~576460752303423488ULL, position->is_boosted_mask & ~576460752303423488ULL,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)(__builtin_ctzll(576460752303423488ULL) >> 3),
+                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)7,
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -2967,7 +3115,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     if (__builtin_expect(((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL, 0))
     {
         const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~cur_boosted_mask, position->is_link_mask & ~cur_boosted_mask, position->is_boosted_mask & ~cur_boosted_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)(__builtin_ctzll(cur_boosted_mask) >> 3),
+                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)(get_ctz(cur_boosted_mask) >> 3),
                                     position->firewall_fir, position->firewall_sec,
                                     position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
                                     position->is_swap_available_fir, position->is_swap_available_sec};
@@ -3663,7 +3811,7 @@ END_BRANCH_TRACKING();
 static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const bool player, field_t *__restrict__ position)
 {
     cur_search_depth = depth;
-    struct timespec start, stop;
+    TIME_TYPE start, stop;
 
     assert(depth < MAX_DEPTH);
 
@@ -3672,7 +3820,7 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
         possible_moves_t all_moves = possible_moves(position, true);
         for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
             if (all_moves.moves[i].fir_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * depth), .has_timed_out = false};
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * depth)};
 
         field_t best_field = all_moves.moves[0];
 
@@ -3682,7 +3830,7 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
 
         for (int i = 0; i < all_moves.moves_count; ++i)
         {
-            clock_gettime(CLOCK_MONOTONIC, &start);
+            get_time(start);
 
             field_t pos = all_moves.moves[i];
 
@@ -3690,24 +3838,24 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
             if (is_first_move)
             {
                 childres = minimax_min(depth - 1, alpha, beta, &pos);
-                clock_gettime(CLOCK_MONOTONIC, &stop);
-                debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                get_time(stop);
+                debug_printf("Maximize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
             }
             else
             {
                 childres = minimax_min(depth - 1, alpha, alpha + 1, &pos);
-                clock_gettime(CLOCK_MONOTONIC, &stop);
+                get_time(stop);
                 if (childres > alpha)
                 {
-                    debug_printf("Maximize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
-                    clock_gettime(CLOCK_MONOTONIC, &start);
+                    debug_printf("Maximize first minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
+                    get_time(start);
                     childres = minimax_min(depth - 1, alpha, beta, &pos);
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
-                    debug_printf("Maximize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                    get_time(stop);
+                    debug_printf("Maximize second minimax call improv time:%" PRId64 "ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
                 }
                 else
                 {
-                    debug_printf("Maximize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), alpha, childres);
+                    debug_printf("Maximize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
                 }
             }
 
@@ -3716,14 +3864,14 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
             is_first_move = false;
         }
 
-        return (minimax_main_result_t){.best_field = best_field, .evaluation = alpha, .has_timed_out = false};
+        return (minimax_main_result_t){.best_field = best_field, .evaluation = alpha};
     }
     else
     {
         possible_moves_t all_moves = possible_moves(position, false);
         for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
             if (all_moves.moves[i].sec_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * depth), .has_timed_out = false};
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * depth)};
 
         field_t best_field = all_moves.moves[0];
 
@@ -3733,7 +3881,7 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
 
         for (int i = 0; i < all_moves.moves_count; ++i)
         {
-            clock_gettime(CLOCK_MONOTONIC, &start);
+            get_time(start);
             int childres;
 
             field_t pos = all_moves.moves[i];
@@ -3741,24 +3889,24 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
             if (is_first_move)
             {
                 childres = minimax_max(depth - 1, alpha, beta, &pos);
-                clock_gettime(CLOCK_MONOTONIC, &stop);
-                debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                get_time(stop);
+                debug_printf("Minimize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
             }
             else
             {
                 childres = minimax_max(depth - 1, beta - 1, beta, &pos);
-                clock_gettime(CLOCK_MONOTONIC, &stop);
+                get_time(stop);
                 if (childres < beta)
                 {
-                    debug_printf("Minimize first minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
-                    clock_gettime(CLOCK_MONOTONIC, &start);
+                    debug_printf("Minimize first minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
+                    get_time(start);
                     childres = minimax_max(depth - 1, alpha, beta, &pos);
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
-                    debug_printf("Minimize second minimax call improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                    get_time(stop);
+                    debug_printf("Minimize second minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
                 }
                 else
                 {
-                    debug_printf("Minimize first minimax call no-improv time: %ld ms, %d -> %d\n", (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000), beta, childres);
+                    debug_printf("Minimize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
                 }
             }
 
@@ -3767,23 +3915,11 @@ static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, 
             is_first_move = false;
         }
 
-        return (minimax_main_result_t){.best_field = best_field, .evaluation = beta, .has_timed_out = false};
+        return (minimax_main_result_t){.best_field = best_field, .evaluation = beta};
     }
 }
 
-static inline float simple_sqrt(int n)
-{
-    float x = (float)n;
-    float prev;
-
-    do
-    {
-        prev = x;
-        x = (x + n / x) * 0.5f;
-    } while (x - prev > 0.0001f || prev - x > 0.0001f);
-
-    return x;
-}
+static const uint8_t isqrt_lut[256] = {0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15};
 
 static minimax_main_result_t minimax_iteration_main(const int max_depth, const int64_t max_search_time, int alpha, int beta, const bool player, field_t *__restrict__ position)
 {
@@ -3791,7 +3927,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
     assert(max_search_time >= 100 && "max_search_time must be at least 100 milliseconds");
     assert(max_depth < MAX_DEPTH);
 
-    struct timespec start, start_it, stop, global_start;
+    TIME_TYPE start, start_it, stop, global_start;
     minimax_main_result_t best_result;
 
     typedef struct
@@ -3801,16 +3937,20 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
         bool is_exact; // false = upper bound from failed null-window
     } move_scores_wrapper;
 
-    clock_gettime(CLOCK_MONOTONIC, &global_start);
+    debug_printf("minimax_iteration_main entry\n");
+
+    get_time(global_start);
 
     if (player)
     {
         possible_moves_t all_moves = possible_moves(position, true);
         for (int i = 0; i < all_moves.moves_count; ++i)
             if (all_moves.moves[i].fir_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * max_depth), .has_timed_out = false};
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * max_depth)};
 
-        float branching_factor_guess = simple_sqrt(all_moves.moves_count);
+        uint64_t branching_factor_guess = (uint64_t)isqrt_lut[all_moves.moves_count * 2];
+
+        debug_printf("branching_factor_guess = %" PRIu64 "\n", branching_factor_guess);
 
         field_t best_field = all_moves.moves[0];
         int prev_alpha = alpha;
@@ -3826,7 +3966,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
             int best_move_idx = -1;
 
             int64_t cur_rec_count = rec_counter;
-            clock_gettime(CLOCK_MONOTONIC, &start);
+            get_time(start);
 
             if (current_depth > 2)
             {
@@ -3857,7 +3997,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
             int iteration_alpha = prev_alpha - 56;
             for (int i = 0; i < all_moves.moves_count; ++i)
             {
-                clock_gettime(CLOCK_MONOTONIC, &start_it);
+                get_time(start_it);
 
                 int move_idx = move_scores[i].move_id;
 
@@ -3867,27 +4007,27 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 if (i == 0) // very likely for the score to be higher
                 {
                     childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
+                    get_time(stop);
 
                     move_scores[i].is_exact = true;
 
-                    // debug_printf(FG_BLUE "[f %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                    // debug_printf(FG_BLUE "[f %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                     // fflush(stdout);
                 }
                 else
                 {
                     childres = minimax_min(current_depth - 1, iteration_alpha, iteration_alpha + 1, &pos);
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
-                    // debug_printf(FG_GREEN "[s %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                    get_time(stop);
+                    // debug_printf(FG_GREEN "[s %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                     // fflush(stdout);
                     if (childres > iteration_alpha)
                     {
                         childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                        clock_gettime(CLOCK_MONOTONIC, &stop);
+                        get_time(stop);
 
                         move_scores[i].is_exact = true;
 
-                        // debug_printf(FG_RED "[r %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                        // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                         // fflush(stdout);
                     }
                     else
@@ -3905,7 +4045,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     best_move_idx = move_idx;
                 }
 
-                int64_t elapsed_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (global_start.tv_sec * 1000 + global_start.tv_nsec / 1000000);
+                int64_t elapsed_time = get_time_diff_millis(stop, global_start);
 
                 if (elapsed_time > max_search_time)
                 {
@@ -3913,9 +4053,8 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     for (int u = 0; u < all_moves.moves_count; ++u)
                         debug_printf("%d, ", move_scores[u].move_id);
                     debug_printf("\n");
-                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
+                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
 
-                    best_result.has_timed_out = true;
                     return best_result;
                 }
             }
@@ -3927,7 +4066,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 iteration_alpha = MIN;
                 for (int i = 0; i < all_moves.moves_count; ++i)
                 {
-                    clock_gettime(CLOCK_MONOTONIC, &start_it);
+                    get_time(start_it);
 
                     int move_idx = move_scores[i].move_id;
 
@@ -3937,25 +4076,25 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     if (i == 0)
                     {
                         childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                        clock_gettime(CLOCK_MONOTONIC, &stop);
+                        get_time(stop);
 
                         move_scores[i].is_exact = true;
-                        // debug_printf(FG_BLUE "[f %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                        // debug_printf(FG_BLUE "[f %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                         // fflush(stdout);
                     }
                     else
                     {
                         childres = minimax_min(current_depth - 1, iteration_alpha, iteration_alpha + 1, &pos);
-                        clock_gettime(CLOCK_MONOTONIC, &stop);
-                        // debug_printf(FG_GREEN "[s %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                        get_time(stop);
+                        // debug_printf(FG_GREEN "[s %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                         // fflush(stdout);
                         if (childres > iteration_alpha)
                         {
                             childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                            clock_gettime(CLOCK_MONOTONIC, &stop);
+                            get_time(stop);
 
                             move_scores[i].is_exact = true;
-                            // debug_printf(FG_RED "[r %d: %d -> %d : %ld] " RESET, move_idx, iteration_alpha, childres, (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start_it.tv_sec * 1000 + start_it.tv_nsec / 1000000));
+                            // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                             // fflush(stdout);
                         }
                         else
@@ -3973,9 +4112,9 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         best_move_idx = move_idx;
                     }
 
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
+                    get_time(stop);
 
-                    int64_t elapsed_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (global_start.tv_sec * 1000 + global_start.tv_nsec / 1000000);
+                    int64_t elapsed_time = get_time_diff_millis(stop, global_start);
 
                     if (elapsed_time > max_search_time)
                     {
@@ -3983,8 +4122,8 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         for (int u = 0; u < all_moves.moves_count; ++u)
                             debug_printf("%d, ", move_scores[u].move_id);
                         debug_printf("\n");
-                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
-                        best_result.has_timed_out = true;
+                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
+
                         return best_result;
                     }
                 }
@@ -3995,20 +4134,20 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
-            clock_gettime(CLOCK_MONOTONIC, &stop);
+            get_time(stop);
 
-            int64_t duration = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000);
+            int64_t duration = get_time_diff_millis(stop, start);
 
-            debug_printf("Depth %d completed in %ld ms (best_move_idx = %d), evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
+            debug_printf("Depth %d completed in %" PRId64 " ms (best_move_idx = %d), evaluation: %d, checked_pos: %" PRId64 ", pos/ms: %f\n",
                          current_depth,
                          duration,
                          best_move_idx,
                          iteration_alpha,
                          rec_counter - cur_rec_count,
-                         (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
+                         (double)(rec_counter - cur_rec_count) / ((double)duration / 1000000.0));
 
             prev_alpha = iteration_alpha;
-            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_alpha, .has_timed_out = false};
+            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_alpha};
 
             if (iteration_alpha > 4096 || iteration_alpha < -4096)
             {
@@ -4016,9 +4155,9 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 return best_result;
             }
 
-            debug_printf("cur=%ld, next_guess=%ld\n", duration, (int64_t)((float)duration * branching_factor_guess));
+            debug_printf("cur=%" PRId64 ", next_guess=%" PRId64 "\n", duration, (int64_t)(duration * branching_factor_guess));
 
-            if ((int64_t)((float)duration * branching_factor_guess) > max_search_time)
+            if ((int64_t)(duration * branching_factor_guess) > max_search_time)
             {
                 debug_printf("Speculative exit\n");
                 return best_result;
@@ -4032,9 +4171,11 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
         possible_moves_t all_moves = possible_moves(position, false);
         for (int i = 0; i < all_moves.moves_count; ++i)
             if (all_moves.moves[i].sec_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * max_depth), .has_timed_out = false};
+                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * max_depth)};
 
-        float branching_factor_guess = simple_sqrt(all_moves.moves_count);
+        uint64_t branching_factor_guess = (uint64_t)isqrt_lut[all_moves.moves_count * 2];
+
+        debug_printf("branching_factor_guess = %" PRIu64 "\n", branching_factor_guess);
 
         field_t best_field = all_moves.moves[0];
         int prev_beta = beta;
@@ -4050,7 +4191,7 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
             int best_move_idx = -1;
 
             int64_t cur_rec_count = rec_counter;
-            clock_gettime(CLOCK_MONOTONIC, &start);
+            get_time(start);
 
             if (current_depth > 2)
             {
@@ -4115,9 +4256,9 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     best_move_idx = move_idx;
                 }
 
-                clock_gettime(CLOCK_MONOTONIC, &stop);
+                get_time(stop);
 
-                int64_t elapsed_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (global_start.tv_sec * 1000 + global_start.tv_nsec / 1000000);
+                int64_t elapsed_time = get_time_diff_millis(stop, global_start);
 
                 if (elapsed_time > max_search_time)
                 {
@@ -4125,9 +4266,8 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     for (int u = 0; u < all_moves.moves_count; ++u)
                         debug_printf("%d, ", move_scores[u].move_id);
                     debug_printf("\n");
-                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
+                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
 
-                    best_result.has_timed_out = true;
                     return best_result;
                 }
             }
@@ -4172,9 +4312,9 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         best_move_idx = move_idx;
                     }
 
-                    clock_gettime(CLOCK_MONOTONIC, &stop);
+                    get_time(stop);
 
-                    int64_t elapsed_time = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (global_start.tv_sec * 1000 + global_start.tv_nsec / 1000000);
+                    int64_t elapsed_time = get_time_diff_millis(stop, global_start);
 
                     if (elapsed_time > max_search_time)
                     {
@@ -4182,8 +4322,8 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         for (int u = 0; u < all_moves.moves_count; ++u)
                             debug_printf("%d, ", move_scores[u].move_id);
                         debug_printf("\n");
-                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %ld\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
-                        best_result.has_timed_out = true;
+                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
+
                         return best_result;
                     }
                 }
@@ -4194,20 +4334,20 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
-            clock_gettime(CLOCK_MONOTONIC, &stop);
+            get_time(stop);
 
-            int64_t duration = (stop.tv_sec * 1000 + stop.tv_nsec / 1000000) - (start.tv_sec * 1000 + start.tv_nsec / 1000000);
+            int64_t duration = get_time_diff_millis(stop, start);
 
-            debug_printf("Depth %d completed in %ld ms (best_move_idx = %d), evaluation: %d, checked_pos: %ld, pos/ms: %f\n",
+            debug_printf("Depth %d completed in %" PRId64 " ms (best_move_idx = %d), evaluation: %d, checked_pos: %" PRId64 ", pos/ms: %f\n",
                          current_depth,
                          duration,
                          best_move_idx,
                          iteration_beta,
                          rec_counter - cur_rec_count,
-                         (double)(rec_counter - cur_rec_count) / ((double)(stop.tv_sec * 1000000000 + stop.tv_nsec - start.tv_sec * 1000000000 - start.tv_nsec) / 1000000.0));
+                         (double)(rec_counter - cur_rec_count) / ((double)duration / 1000000.0));
 
             prev_beta = iteration_beta;
-            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_beta, .has_timed_out = false};
+            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_beta};
 
             if (iteration_beta > 4096 || iteration_beta < -4096)
             {
@@ -4215,9 +4355,9 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 return best_result;
             }
 
-            debug_printf("cur=%ld, next_guess=%ld\n", duration, (int64_t)((float)duration * branching_factor_guess));
+            debug_printf("cur=%" PRId64 ", next_guess=%" PRId64 "\n", duration, (int64_t)(duration * branching_factor_guess));
 
-            if ((int64_t)((float)duration * branching_factor_guess) > max_search_time)
+            if ((int64_t)(duration * branching_factor_guess) > max_search_time)
             {
                 debug_printf("Speculative exit\n");
                 return best_result;
