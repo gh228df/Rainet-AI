@@ -67,19 +67,35 @@ endif()
 
 target_link_options(rnab PRIVATE -Wl,--gc-sections)
 
-# Static linking rules per platform:
-#   Windows  -> always fully static (library or executable)
-#   Android  -> only embed libgcc, leave libc/libm/libdl dynamic
-#   Linux    -> static only for library; executable links dynamically
 if(WIN32)
-    target_link_options(rnab PRIVATE -static -static-libgcc)
+    if(BUILD_LIBRARY)
+        target_compile_options(rnab PRIVATE -mno-stack-arg-probe -fno-stack-check -fno-builtin -ffreestanding)
+        target_link_options(rnab PRIVATE -static -nostdlib -nodefaultlibs -mno-stack-arg-probe -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,1)
+    else()
+        target_compile_options(rnab PRIVATE -mno-stack-arg-probe -fno-stack-check -ffreestanding)
+        target_link_options(rnab PRIVATE -static -mno-stack-arg-probe -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,1)
+    endif()
+    
+    set(CMAKE_C_STANDARD_LIBRARIES "" CACHE STRING "" FORCE)
+    target_link_libraries(rnab PRIVATE kernel32)
+
     message(STATUS "Static linking: full (Windows)")
 elseif(ANDROID)
-    target_link_options(rnab PRIVATE -static-libgcc -static)
-    message(STATUS "Static linking: libgcc only (Android)")
+    string(REPLACE "-fstack-protector-strong" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REPLACE "-g" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REPLACE "-static-libstdc++" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REPLACE "-funwind-tables" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REPLACE "-D_FORTIFY_SOURCE=2" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+
+    target_compile_options(rnab PRIVATE -fno-builtin -ffreestanding)
+    target_link_options(rnab PRIVATE -nostdlib -static -Wl,--error-limit=0)
+
+    message(STATUS "Static linking: full (Android)")
 else() # Linux
     if(BUILD_LIBRARY)
-        target_link_options(rnab PRIVATE -nostdlib -static)
+        target_compile_options(rnab PRIVATE -fno-builtin -ffreestanding)
+        target_link_options(rnab PRIVATE -nostdlib -static -nodefaultlibs)
+
         message(STATUS "Static linking: full (Linux library)")
     else()
         message(STATUS "Static linking: none (Linux executable)")
@@ -93,10 +109,6 @@ endif()
 # ─────────────────────────────────────────────
 # Platform libraries (executable only)
 # ─────────────────────────────────────────────
-
-if(WIN32)
-    target_link_libraries(rnab PRIVATE pthread)
-endif()
 
 if(NOT BUILD_LIBRARY)
     if(WIN32)
