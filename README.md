@@ -17,7 +17,7 @@ Compilation instructions can be found at: [Compilation Guide](docs/compile_instr
 
 ## Integration
 
-This project can be compiled into a standalone library (just 80KB for x86-64) which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
+This project can be compiled into a standalone library with a simple interface (just 80KB for x86-64) which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
 
 ## Current Limitations
 
