@@ -1,3 +1,12 @@
+# Compilation
+
+The rnab library is designed to be freestanding and therefore doesn't rely on libc or anything else. The supported platforms are:
+- Windows x86-64, x86
+- Linux x86-64, x86
+- Android ARM64, armv7
+
+It should be compatible with any hardware, though for limited or very old systems you would either need to provide helper functions to handle 64-bit operations or rely on external dependencies.
+
 # Flags
 
 - `RNAB_DEBUG` - print verbose debug information (little to no runtime cost)
