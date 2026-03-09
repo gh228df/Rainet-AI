@@ -31,7 +31,7 @@ static void print_generic_representation(generic_representation *r)
 typedef struct 
 {
     generic_representation position;
-    int depth;
+    int32_t depth;
 } benchmark_t;
 
 static const benchmark_t benchmark_array[] = {
@@ -50,7 +50,7 @@ static const benchmark_t benchmark_array[] = {
 
 };
 
-static generic_representation intern_to_generic_representation(field_t *pos)
+static generic_representation intern_to_generic_representation(field_t *__restrict__ pos)
 {
     generic_representation res = {0};
 
@@ -77,7 +77,7 @@ static generic_representation intern_to_generic_representation(field_t *pos)
     return res;
 }
 
-static field_t generic_representation_to_intern(const generic_representation *game_state)
+static field_t generic_representation_to_intern(const generic_representation *__restrict__ game_state)
 {
     assert(minimax_iteration_main);
     assert(minimax_main);
@@ -222,18 +222,19 @@ static void simulate_game(generic_representation *init_game_state, bool player_t
 
     for (;;)
     {
-        struct timespec start_it, stop_it;
+        TIME_TYPE start_it, stop_it;
 
         __builtin_printf("pos: ");
         temp_rep = intern_to_generic_representation(&pos);
         print_generic_representation(&temp_rep);
 
-        clock_gettime(CLOCK_MONOTONIC, &start_it);
+
+        get_time(start_it);
         minimax_main_result_t move = minimax_iteration_main(analysis_depth, INT64_MAX, MIN, MAX, player_to_move, &pos);
         player_to_move = !player_to_move;
-        clock_gettime(CLOCK_MONOTONIC, &stop_it);
-
-        __builtin_printf("Maximized score: %d      %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        get_time(stop_it);
+        
+        __builtin_printf("Maximized score: %d      %" PRId64 "\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
 
         pos = move.best_field;
         print_field(&pos);
@@ -245,12 +246,12 @@ static void simulate_game(generic_representation *init_game_state, bool player_t
         temp_rep = intern_to_generic_representation(&pos);
         print_generic_representation(&temp_rep);
 
-        clock_gettime(CLOCK_MONOTONIC, &start_it);
+        get_time(start_it);
         move = minimax_iteration_main(analysis_depth, INT64_MAX, MIN, MAX, player_to_move, &pos);
         player_to_move = !player_to_move;
-        clock_gettime(CLOCK_MONOTONIC, &stop_it);
+        get_time(stop_it);
 
-        __builtin_printf("Minimized score: %d      %ld\n", move.evaluation, (stop_it.tv_sec * 1000000000l + stop_it.tv_nsec - start_it.tv_sec * 1000000000l - start_it.tv_nsec) / 1000000);
+        __builtin_printf("Minimized score: %d      %" PRId64 "\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
 
         pos = move.best_field;
         print_field(&pos);
@@ -262,7 +263,7 @@ static void simulate_game(generic_representation *init_game_state, bool player_t
         clear_branch_tracker();
         for (int i = 0; i < _total_branch_count; ++i)
         {
-            __builtin_printf("branch=%4d (%s), total entries: %ld, cutoffs: %ld, cutoff%%=%f, recursion_cost=%ld\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
+            __builtin_printf("branch=%4d (%s), total entries: %" PRId64 ", cutoffs: %" PRId64 ", cutoff%%=%f, recursion_cost=%" PRId64 "\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
         }
 #endif
     }
@@ -270,50 +271,56 @@ static void simulate_game(generic_representation *init_game_state, bool player_t
 
 #undef CHECK_WIN
 
-static void rnab_benchmark()
-{
-#ifdef BRANCH_DEBUG
-    clear_branch_tracker();
-#endif
-
-    struct timespec start, stop;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < sizeof(benchmark_array) / sizeof(benchmark_array[0]); ++i)
-    {
-        field_t pos = generic_representation_to_intern(&benchmark_array[i].position);
-        field_t temp_field;
-
-        print_field(&pos);
-
-        CLEAR_TT();
-
-        temp_field = minimax_iteration_main(benchmark_array[i].depth, INT64_MAX, MIN, MAX, true, &pos).best_field;
-        print_field(&temp_field);
-
-        pos = reverse_field(&pos);
-        print_field(&pos);
-
-        CLEAR_TT();
-
-        temp_field = minimax_iteration_main(benchmark_array[i].depth, INT64_MAX, MIN, MAX, false, &pos).best_field;
-        print_field(&temp_field);
-
-#ifdef BRANCH_DEBUG
-        for (int i = 0; i < _total_branch_count; ++i)
-        {
-            __builtin_printf("branch=%4d (%s), total entries: %ld, cutoffs: %ld, cutoff%%=%f, recursion_cost=%ld\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
-        }
-        // clear_branch_tracker();
-#endif
-    }
-    clock_gettime(CLOCK_MONOTONIC, &stop);
-    __builtin_printf("Compute time: %ld\n", (stop.tv_sec * 1000000000l + stop.tv_nsec - start.tv_sec * 1000000000l - start.tv_nsec) / 1000000);
-}
-
 extern EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player)
 {
     field_t position = generic_representation_to_intern(game_state);
     minimax_main_result_t res = minimax_iteration_main(max_depth, max_search_time, MIN, MAX, player, &position);
     *game_state = intern_to_generic_representation(&res.best_field);
     return;
+}
+
+static void rnab_benchmark()
+{
+#ifdef BRANCH_DEBUG
+    clear_branch_tracker();
+#endif
+
+    TIME_TYPE start, stop;
+    generic_representation temp_field;
+    field_t pos;
+
+    get_time(start);
+    for (int i = 0; i < sizeof(benchmark_array) / sizeof(benchmark_array[0]); ++i)
+    {
+        temp_field = benchmark_array[i].position;
+        pos = generic_representation_to_intern(&temp_field);
+        print_field(&pos);
+
+        CLEAR_TT();
+        
+        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, INT64_MAX, 1);
+        pos = generic_representation_to_intern(&temp_field);
+        print_field(&pos);
+
+        pos = generic_representation_to_intern(&benchmark_array[i].position);
+        pos = reverse_field(&pos);
+        print_field(&pos);
+
+        CLEAR_TT();
+
+        temp_field = intern_to_generic_representation(&pos);
+        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, INT64_MAX, 0);
+        pos = generic_representation_to_intern(&temp_field);
+        print_field(&pos);
+
+#ifdef BRANCH_DEBUG
+        for (int i = 0; i < _total_branch_count; ++i)
+        {
+            __builtin_printf("branch=%4d (%s), total entries: %" PRId64 ", cutoffs: %" PRId64 ", cutoff%%=%f, recursion_cost=%" PRId64 "\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
+        }
+        // clear_branch_tracker();
+#endif
+    }
+    get_time(stop);
+    __builtin_printf("Compute time: %" PRId64 "\n", get_time_diff_millis(stop, start));
 }
