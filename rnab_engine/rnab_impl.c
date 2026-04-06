@@ -1,15 +1,26 @@
 #define _GNU_SOURCE
 #include <stdint.h>
-#include <assert.h>
-#include <stdio.h>
-#include <inttypes.h>
 #include <stdbool.h>
 #include "../third_party/rapidhash.h"
-
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
+#endif
+
+#include <stdarg.h>
+#include <stddef.h>
+
+#include "syscalls.c"
+
+#define STB_SPRINTF_MIN 512
+
+#include "../third_party/stb_sprintf.c"
+
+#ifdef RNAB_DEBUG
+#define debug_printf(...) _printf(__VA_ARGS__)
+#define debug_get_time(time_var) get_time(time_var)
 #else
-#include <time.h>
+#define debug_printf(...) ((void)0)
+#define debug_get_time(time_var) ((void)0)
 #endif
 
 #ifdef __AVX2__
@@ -19,13 +30,19 @@
 #ifndef GAME_CONSTANTS
 #define GAME_CONSTANTS
 
-#define MAX_MOVES 80
-#define MAX_DEPTH 40
+/*
+ * Firewall              :         60 combinations
+ * Boosted Card Movement :         12 combinations
+ * Card Movement         : 7 * 4 = 28 combinations
+ * Swap                  : 4 * 4 = 16 combinations
+ *
+ * Total                 :         116 moves
+ */
 
-#define MIN -1000000
-#define MAX 1000000
+#define MAX_MOVES 128 // 12 extra ones just in case
 
-#define MAX_BRANCHES 1000
+#define MIN INT16_MIN
+#define MAX INT16_MAX
 
 #ifndef MIN_CACHE_DEPTH
 #define MIN_CACHE_DEPTH 1
@@ -44,23 +61,10 @@
 
 #endif
 
-#define CAN_MOVE_BACKWARD_RIGHT 18374403900871474688ULL
-#define CAN_MOVE_BACKWARD_LEFT 9187201950435737344ULL
-#define CAN_MOVE_FORWARD_RIGHT 71775015237779198ULL
-#define CAN_MOVE_FORWARD_LEFT 35887507618889599ULL
-
 #define CAN_MOVE_DOUBLE_RIGHT 18229723555195321596ULL
 #define CAN_MOVE_RIGHT 18374403900871474942ULL
 #define CAN_MOVE_LEFT 9187201950435737471ULL
 #define CAN_MOVE_DOUBLE_LEFT 4557430888798830399ULL
-#define CAN_MOVE_DOUBLE_FORWARD 281474976710655ULL
-#define CAN_MOVE_DOUBLE_BACKWARD 18446744073709486080ULL
-
-#ifdef RNAB_DEBUG
-#define debug_printf(...) __builtin_printf(__VA_ARGS__)
-#else
-#define debug_printf(...) ((void)0)
-#endif
 
 #define RESET "\033[0m"
 #define FG_RED "\033[31m"
@@ -89,21 +93,23 @@
     } while (0)
 #endif
 
-typedef struct
+typedef union
 {
-    uint64_t hash_entry;
-    int32_t eval;
-    uint8_t depth;
-    uint8_t flag;
-} tt_entry_t;
+    uint64_t raw;
+    struct
+    {
+        uint8_t firewall_fir;
+        uint8_t firewall_sec;
 
-_Static_assert(MAX_DEPTH < UINT8_MAX, "MAX_DEPTH should be smaller than 256"); // uint8_t limit
+        uint8_t fir_link;
+        uint8_t sec_link;
+        uint8_t fir_virus;
+        uint8_t sec_virus;
 
-typedef struct
-{
-    tt_entry_t depth_preferred;
-    tt_entry_t scratch;
-} tt_bucket_t;
+        bool is_swap_available_fir;
+        bool is_swap_available_sec;
+    } fields;
+} extra_args_t;
 
 typedef struct
 {
@@ -112,34 +118,20 @@ typedef struct
     uint64_t is_link_mask;
     uint64_t is_boosted_mask;
 
-    uint8_t forward_adv_fir;
-    uint8_t forward_adv_sec;
-
-    uint8_t firewall_fir;
-    uint8_t firewall_sec;
-
-    uint8_t fir_link : 4;
-    uint8_t sec_link : 4;
-    uint8_t fir_virus : 4;
-    uint8_t sec_virus : 4;
-
-    uint8_t is_swap_available_fir;
-    uint8_t is_swap_available_sec;
+    extra_args_t args;
 } field_t;
 
-_Static_assert(sizeof(field_t) == 40, "field must be exactly 40 bytes");
+typedef struct
+{
+    uint64_t depth_preferred;
+    uint64_t scratch;
+} tt_bucket_t;
 
 typedef struct
 {
     field_t best_field;
-    int evaluation;
+    int32_t evaluation;
 } minimax_main_result_t;
-
-typedef struct
-{
-    field_t moves[MAX_MOVES];
-    int moves_count;
-} possible_moves_t;
 
 #ifdef BRANCH_DEBUG
 typedef struct
@@ -149,8 +141,8 @@ typedef struct
     int64_t improved_score;
     int64_t recursion_cost;
     const char *msg;
-    int temp_score;
-    int pad;
+    int32_t temp_score;
+    int32_t pad;
 } cutoff_tracker_t;
 #endif
 
@@ -158,9 +150,12 @@ typedef struct
 #define TABLE_SIZE 1024
 #endif
 
+#define ENTRY_HASH_SIZE 37
+#define ENTRY_HASH_MASK ((1ULL << (ENTRY_HASH_SIZE)) - 1)
+#define TABLE_SIZE_BITS __builtin_ctzll(TABLE_SIZE)
+
 #if defined(__BMI__)
 // #define clear_lowest_set_bit(x, var) (x) = _blsr_u64(x) // it is slower???
-// #define clear_highest_set_bit(x, var) ((x) ^= (var))
 #define clear_lowest_set_bit(x, var) ((x) &= (x - 1))
 #define clear_highest_set_bit(x, var) ((x) ^= (var))
 #else
@@ -170,163 +165,24 @@ typedef struct
 
 #define extract_lsb(x) (x & -x)
 
-#if __SIZEOF_POINTER__ == 8
+static const int32_t indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
 
-#define get_ctz(x) __builtin_ctzll(x)
-#define uint64_div(a, b) (a / b)
+static uint64_t rec_counter = 0;
 
-#else
+STATIC_BSS tt_bucket_t table[TABLE_SIZE * 2] __attribute__((aligned(4096)));
 
-static inline __attribute__((always_inline)) int get_ctz(uint64_t x)
-{
-    uint32_t lo = (uint32_t)x;
-    uint32_t hi = (uint32_t)(x >> 32);
-
-    int low = __builtin_ctz(lo);
-    int high = 32 + __builtin_ctz(hi);
-
-    return (lo == 0) ? high : low;
-}
-
-static uint64_t uint64_div(uint64_t a, uint64_t d)
-{
-    uint64_t remainder = 0;
-    uint64_t carry = 0;
-
-    for (unsigned sr = 64; sr > 0; --sr)
-    {
-        remainder = (remainder << 1) | (a >> 63);
-        a = (a << 1) | carry;
-        const uint64_t s = (uint64_t)(d - remainder - 1) >> 63;
-        carry = s & 1;
-        remainder -= d & (-(uint64_t)s);
-    }
-
-    return (a << 1) | carry;
-}
-
-#endif
-
-#if defined(_WIN32) || defined(_WIN64)
-
-static LARGE_INTEGER _qpf_freq;
-
-BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    (void)hinstDLL;
-    (void)lpvReserved;
-
-    if (fdwReason == DLL_PROCESS_ATTACH)
-    {
-        QueryPerformanceFrequency(&_qpf_freq);
-    }
-
-    return TRUE;
-}
-
-#define TIME_TYPE LARGE_INTEGER
-
-#define get_time(time_var) \
-    QueryPerformanceCounter(&(time_var))
-
-#define get_time_diff_millis(stop_var, start_var) \
-    uint64_div(((stop_var).QuadPart - (start_var).QuadPart) * 1000ULL, _qpf_freq.QuadPart)
-
-#define get_time_diff_micros(stop_var, start_var) \
-    uint64_div(((stop_var).QuadPart - (start_var).QuadPart) * 1000000ULL, _qpf_freq.QuadPart)
-
-#else
-
-#define TIME_TYPE struct timespec
-
-#if defined(__aarch64__)
-
-#define get_time(time_var)                                         \
-    do                                                             \
-    {                                                              \
-        register long _r0 __asm__("x0") = 1;                       \
-        register struct timespec *_r1 __asm__("x1") = &(time_var); \
-        register long _r8 __asm__("x8") = 113;                     \
-        __asm__ volatile(                                          \
-            "svc #0\n"                                             \
-            : "+r"(_r0)                                            \
-            : "r"(_r1), "r"(_r8)                                   \
-            : "memory");                                           \
-    } while (0)
-
-#elif defined(__arm__)
-
-#define get_time(time_var)                                      \
-    do                                                          \
-    {                                                           \
-        register int r0 __asm__("r0") = 1;                      \
-        register struct timespec *r1 __asm__("r1") = &time_var; \
-        register int r7 __asm__("r7") = 263;                    \
-        __asm__ volatile(                                       \
-            "swi #0\n"                                          \
-            : "+r"(r0) : "r"(r1), "r"(r7) : "memory");          \
-    } while (0)
-
-#elif defined(__i386__)
-
-#define get_time(time_var)                                           \
-    do                                                               \
-    {                                                                \
-        register long _eax __asm__("eax") = 265;                     \
-        register long _ebx __asm__("ebx") = 1;                       \
-        register struct timespec *_ecx __asm__("ecx") = &(time_var); \
-        __asm__ volatile(                                            \
-            "int $0x80\n"                                            \
-            : "+r"(_eax)                                             \
-            : "r"(_ebx), "r"(_ecx)                                   \
-            : "memory");                                             \
-    } while (0)
-
-#elif defined(__x86_64__)
-
-#define get_time(time_var)                                           \
-    do                                                               \
-    {                                                                \
-        register long _rax __asm__("rax") = 228;                     \
-        register long _rdi __asm__("rdi") = 1;                       \
-        register struct timespec *_rsi __asm__("rsi") = &(time_var); \
-        __asm__ volatile(                                            \
-            "syscall\n"                                              \
-            : "+r"(_rax)                                             \
-            : "r"(_rdi), "r"(_rsi)                                   \
-            : "rcx", "r11", "memory");                               \
-    } while (0)
-
-#else
-
-#warning "Defaulting to clock_gettime"
-#define get_time(time_var) clock_gettime(CLOCK_MONOTONIC, &time_var)
-
-#endif
-
-#define get_time_diff_millis(stop_var, start_var) ((stop_var.tv_sec * 1000 + stop_var.tv_nsec / 1000000) - (start_var.tv_sec * 1000 + start_var.tv_nsec / 1000000))
-#define get_time_diff_micros(stop_var, start_var) ((stop_var.tv_sec * 1000000 + stop_var.tv_nsec / 1000) - (start_var.tv_sec * 1000000 + start_var.tv_nsec / 1000))
-
-#endif
-
-#define CLEAR_TT()                               \
-    __builtin_memset(tt_fir, 0, sizeof(tt_fir)); \
-    __builtin_memset(tt_sec, 0, sizeof(tt_sec))
-
-static const int indexes[70] = {15, 23, 27, 29, 30, 39, 43, 45, 46, 51, 53, 54, 57, 58, 60, 71, 75, 77, 78, 83, 85, 86, 89, 90, 92, 99, 101, 102, 105, 106, 108, 113, 114, 116, 120, 135, 139, 141, 142, 147, 149, 150, 153, 154, 156, 163, 165, 166, 169, 170, 172, 177, 178, 180, 184, 195, 197, 198, 201, 202, 204, 209, 210, 212, 216, 225, 226, 228, 232, 240};
-
-static int cur_search_depth = 0;
-static int64_t rec_counter = 0;
-
-static tt_bucket_t tt_fir[TABLE_SIZE] __attribute__((aligned(4096), section(".bss")));
-static tt_bucket_t tt_sec[TABLE_SIZE] __attribute__((aligned(4096), section(".bss")));
+static tt_bucket_t *tt_fir = table;
+static tt_bucket_t *tt_sec = table + TABLE_SIZE;
 
 #ifdef BRANCH_DEBUG
-cutoff_tracker_t cutoff_tracker[MAX_BRANCHES] = {0};
 
-void clear_branch_tracker()
+#define MAX_BRANCHES 1000
+
+static cutoff_tracker_t cutoff_tracker[MAX_BRANCHES] = {0};
+
+static void clear_branch_tracker()
 {
-    for (int i = 0; i < MAX_BRANCHES; ++i)
+    for (int32_t i = 0; i < MAX_BRANCHES; ++i)
     {
         cutoff_tracker[i].total_entries = 0;
         cutoff_tracker[i].cutoff_entries = 0;
@@ -353,7 +209,141 @@ static uint64_t reverse_mask(uint64_t mask)
     return res;
 }
 
-static field_t reverse_field(field_t *__restrict__ f) // should only be used for debugging
+static inline __attribute__((always_inline)) void init_field(field_t *__restrict__ f, uint8_t pos_fir, uint8_t pos_sec)
+{
+    f->is_sec_mask = 0;
+    f->is_link_mask = 0;
+    f->is_fir_mask = 0;
+    f->is_boosted_mask = 0;
+
+    f->args.fields.fir_link = 0;
+    f->args.fields.fir_virus = 0;
+    f->args.fields.sec_link = 0;
+    f->args.fields.sec_virus = 0;
+
+    f->args.fields.firewall_fir = 0;
+    f->args.fields.firewall_sec = 0;
+
+    f->args.fields.is_swap_available_fir = true;
+    f->args.fields.is_swap_available_sec = true;
+
+    static const int init_pos_fir[8] = {63, 62, 61, 52, 51, 58, 57, 56};
+    static const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
+
+    for (int i = 0; i < 8; ++i)
+    {
+        f->is_sec_mask |= (1ULL << init_pos_sec[i]);
+        f->is_fir_mask |= (1ULL << init_pos_fir[i]);
+        f->is_link_mask |= ((uint64_t)(((~pos_fir) >> i) & 1) << init_pos_fir[i]) | ((uint64_t)(((~pos_sec) >> i) & 1) << init_pos_sec[i]);
+    }
+}
+
+static void print_field(const field_t *__restrict__ f)
+{
+    _printf("Virus: %d         Link: %d\n", f->args.fields.fir_virus, f->args.fields.fir_link);
+    _printf("   " BG_GREEN "[C]" RESET);
+    if (f->args.fields.is_swap_available_fir)
+        _printf(BG_GREEN "[S]" RESET "      ");
+    else
+        _printf(BG_RED "[S]" RESET "      ");
+    if (f->args.fields.firewall_fir == 0)
+        _printf(BG_GREEN "[F]" RESET);
+    else
+        _printf(BG_RED "[F]" RESET);
+    if (f->is_boosted_mask & f->is_fir_mask)
+        _printf(BG_RED "[B]" RESET "\n");
+    else
+        _printf(BG_GREEN "[B]" RESET "\n");
+    for (int i = 63; i >= 0; --i)
+    {
+        if (f->args.fields.firewall_fir == ((i << 1) | 1))
+            _printf(BG_GREEN);
+        if (f->args.fields.firewall_sec == ((i << 1) | 1))
+            _printf(BG_RED);
+        if (((f->is_fir_mask & f->is_link_mask) >> i) & 1)
+        {
+            if ((f->is_boosted_mask >> i) & 1)
+                _printf("" FG_GREEN "[" FG_BLUE "L" FG_GREEN "]");
+            else
+                _printf("[" FG_GREEN "L" FG_WHITE "]");
+        }
+        else if ((f->is_fir_mask >> i) & 1)
+        {
+            if ((f->is_boosted_mask >> i) & 1)
+                _printf("" FG_GREEN "[" FG_BLUE "V" FG_GREEN "]");
+            else
+                _printf("[" FG_GREEN "V" FG_WHITE "]");
+        }
+        else if (((f->is_sec_mask & f->is_link_mask) >> i) & 1)
+        {
+            if ((f->is_boosted_mask >> i) & 1)
+                _printf(FG_RED "[" FG_BLUE "L" FG_RED "]");
+            else
+                _printf("[" FG_RED "L" FG_WHITE "]");
+        }
+        else if ((f->is_sec_mask >> i) & 1)
+        {
+            if ((f->is_boosted_mask >> i) & 1)
+                _printf(FG_RED "[" FG_BLUE "V" FG_RED "]");
+            else
+                _printf("[" FG_RED "V" FG_WHITE "]");
+        }
+        else
+            _printf("[ ]");
+
+        if (i % 8 == 0)
+            _printf("\n");
+        _printf(RESET);
+    }
+    _printf("   " BG_GREEN "[C]" RESET);
+    if (f->args.fields.is_swap_available_sec)
+        _printf(BG_GREEN "[S]" RESET "      ");
+    else
+        _printf(BG_RED "[S]" RESET "      ");
+    if (f->args.fields.firewall_sec == 0)
+        _printf(BG_GREEN "[F]" RESET);
+    else
+        _printf(BG_RED "[F]" RESET);
+    if (f->is_boosted_mask & f->is_sec_mask)
+        _printf(BG_RED "[B]" RESET "\n");
+    else
+        _printf(BG_GREEN "[B]" RESET "\n");
+
+    _printf("Virus: %d         Link: %d\n", f->args.fields.sec_virus, f->args.fields.sec_link);
+}
+
+static int32_t __attribute__((noinline)) field_evaluate_slow(const field_t *__restrict__ f)
+{
+    int32_t forward_adv_fir = 0;
+    int32_t forward_adv_sec = 0;
+
+    uint64_t fir_mask = f->is_fir_mask;
+    uint64_t sec_mask = f->is_sec_mask;
+
+    while (fir_mask)
+    {
+        const int pos = __builtin_ctzll(fir_mask);
+        uint64_t bit = 1ULL << pos;
+
+        forward_adv_fir += 7 - (pos >> 3);
+
+        clear_lowest_set_bit(fir_mask, bit);
+    }
+
+    while (sec_mask)
+    {
+        const int pos = __builtin_ctzll(sec_mask);
+        uint64_t bit = 1ULL << pos;
+
+        forward_adv_sec += (pos >> 3);
+
+        clear_lowest_set_bit(sec_mask, bit);
+    }
+
+    return (128 << f->args.fields.fir_link) - (64 << f->args.fields.fir_virus) - (128 << f->args.fields.sec_link) + (64 << f->args.fields.sec_virus) + forward_adv_fir - forward_adv_sec + 256 * (int32_t)f->args.fields.is_swap_available_fir - 256 * (int32_t)f->args.fields.is_swap_available_sec;
+}
+
+static field_t reverse_field(const field_t *__restrict__ f) // should only be used for debugging
 {
     field_t new_field;
 
@@ -362,1704 +352,1265 @@ static field_t reverse_field(field_t *__restrict__ f) // should only be used for
     new_field.is_link_mask = reverse_mask(f->is_link_mask);
     new_field.is_boosted_mask = reverse_mask(f->is_boosted_mask);
 
-    new_field.forward_adv_fir = f->forward_adv_sec;
-    new_field.forward_adv_sec = f->forward_adv_fir;
+    new_field.args.fields.firewall_fir = (f->args.fields.firewall_sec) ? ((126 - (f->args.fields.firewall_sec & 126)) | (f->args.fields.firewall_sec & 1)) : 0;
+    new_field.args.fields.firewall_sec = (f->args.fields.firewall_fir) ? ((126 - (f->args.fields.firewall_fir & 126)) | (f->args.fields.firewall_fir & 1)) : 0;
 
-    new_field.firewall_fir = (f->firewall_sec) ? ((126 - (f->firewall_sec & 126)) | (f->firewall_sec & 1)) : 0;
-    new_field.firewall_sec = (f->firewall_fir) ? ((126 - (f->firewall_fir & 126)) | (f->firewall_fir & 1)) : 0;
+    new_field.args.fields.fir_link = f->args.fields.sec_link;
+    new_field.args.fields.fir_virus = f->args.fields.sec_virus;
 
-    new_field.fir_link = f->sec_link;
-    new_field.fir_virus = f->sec_virus;
+    new_field.args.fields.sec_link = f->args.fields.fir_link;
+    new_field.args.fields.sec_virus = f->args.fields.fir_virus;
 
-    new_field.sec_link = f->fir_link;
-    new_field.sec_virus = f->fir_virus;
-
-    new_field.is_swap_available_fir = f->is_swap_available_sec;
-    new_field.is_swap_available_sec = f->is_swap_available_fir;
+    new_field.args.fields.is_swap_available_fir = f->args.fields.is_swap_available_sec;
+    new_field.args.fields.is_swap_available_sec = f->args.fields.is_swap_available_fir;
 
     return new_field;
 }
 
-static inline __attribute__((always_inline)) field_t init_field(uint8_t pos_fir, uint8_t pos_sec)
-{
-    field_t f = {0};
-
-    f.is_sec_mask = 0;
-    f.is_link_mask = 0;
-    f.is_fir_mask = 0;
-    f.is_boosted_mask = 0;
-
-    f.fir_link = 0;
-    f.fir_virus = 0;
-    f.sec_link = 0;
-    f.sec_virus = 0;
-
-    f.forward_adv_fir = 2;
-    f.forward_adv_sec = 2;
-
-    f.firewall_fir = 0;
-    f.firewall_sec = 0;
-
-    f.is_swap_available_fir = 1;
-    f.is_swap_available_sec = 1;
-
-    static const int init_pos_fir[8] = {63, 62, 61, 52, 51, 58, 57, 56};
-    static const int init_pos_sec[8] = {0, 1, 2, 11, 12, 5, 6, 7};
-
-    for (int i = 0; i < 8; ++i)
-    {
-        f.is_sec_mask |= (1ULL << init_pos_sec[i]);
-        f.is_fir_mask |= (1ULL << init_pos_fir[i]);
-        f.is_link_mask |= ((uint64_t)(((~pos_fir) >> i) & 1) << init_pos_fir[i]) | ((uint64_t)(((~pos_sec) >> i) & 1) << init_pos_sec[i]);
+#define PERFORM_ITERATION_FIR(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                           \
+    if (is_sec_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                 \
+    {                                                                                                                                                                                                                                                                                                   \
+        if (sec_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                           \
+        {                                                                                                                                                                                                                                                                                               \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                              \
+            WRITE_MOVE(is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                             \
+                       ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask ^ new_pos_bitboard) : ((is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
+                       ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                              \
+                       (const extra_args_t){.raw = args.raw + 65536ULL});                                                                                                                                                                                                                               \
+        }                                                                                                                                                                                                                                                                                               \
+        else if (args.fields.fir_virus < 3)                                                                                                                                                                                                                                                             \
+        {                                                                                                                                                                                                                                                                                               \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                              \
+            WRITE_MOVE(is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                             \
+                       ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
+                       ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                              \
+                       (const extra_args_t){.raw = args.raw + 4294967296ULL});                                                                                                                                                                                                                          \
+        }                                                                                                                                                                                                                                                                                               \
+    }                                                                                                                                                                                                                                                                                                   \
+    else if ((is_fir_mask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                   \
+        const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                  \
+        WRITE_MOVE(is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask,                                                                                                                                                                                                                    \
+                   ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                      \
+                   ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                      \
+                   args);                                                                                                                                                                                                                                                                               \
     }
 
-    return f;
-}
-
-static void print_field(field_t *__restrict__ f)
-{
-    __builtin_printf("Virus: %d         Link: %d\n", f->fir_virus, f->fir_link);
-    __builtin_printf("   " BG_GREEN "[C]" RESET);
-    if (f->is_swap_available_fir)
-        __builtin_printf(BG_GREEN "[S]" RESET "      ");
-    else
-        __builtin_printf(BG_RED "[S]" RESET "      ");
-    if (f->firewall_fir == 0)
-        __builtin_printf(BG_GREEN "[F]" RESET);
-    else
-        __builtin_printf(BG_RED "[F]" RESET);
-    if (f->is_boosted_mask & f->is_fir_mask)
-        __builtin_printf(BG_RED "[B]" RESET "\n");
-    else
-        __builtin_printf(BG_GREEN "[B]" RESET "\n");
-    for (int i = 63; i >= 0; --i)
-    {
-        if (f->firewall_fir == ((i << 1) | 1))
-            __builtin_printf(BG_GREEN);
-        if (f->firewall_sec == ((i << 1) | 1))
-            __builtin_printf(BG_RED);
-        if (((f->is_fir_mask & f->is_link_mask) >> i) & 1)
-        {
-            if ((f->is_boosted_mask >> i) & 1)
-                __builtin_printf("" FG_GREEN "[" FG_BLUE "L" FG_GREEN "]");
-            else
-                __builtin_printf("[" FG_GREEN "L" FG_WHITE "]");
-        }
-        else if ((f->is_fir_mask >> i) & 1)
-        {
-            if ((f->is_boosted_mask >> i) & 1)
-                __builtin_printf("" FG_GREEN "[" FG_BLUE "V" FG_GREEN "]");
-            else
-                __builtin_printf("[" FG_GREEN "V" FG_WHITE "]");
-        }
-        else if (((f->is_sec_mask & f->is_link_mask) >> i) & 1)
-        {
-            if ((f->is_boosted_mask >> i) & 1)
-                __builtin_printf(FG_RED "[" FG_BLUE "L" FG_RED "]");
-            else
-                __builtin_printf("[" FG_RED "L" FG_WHITE "]");
-        }
-        else if ((f->is_sec_mask >> i) & 1)
-        {
-            if ((f->is_boosted_mask >> i) & 1)
-                __builtin_printf(FG_RED "[" FG_BLUE "V" FG_RED "]");
-            else
-                __builtin_printf("[" FG_RED "V" FG_WHITE "]");
-        }
-        else
-            __builtin_printf("[ ]");
-
-        if (i % 8 == 0)
-            __builtin_printf("\n");
-        __builtin_printf(RESET);
-    }
-    __builtin_printf("   " BG_GREEN "[C]" RESET);
-    if (f->is_swap_available_sec)
-        __builtin_printf(BG_GREEN "[S]" RESET "      ");
-    else
-        __builtin_printf(BG_RED "[S]" RESET "      ");
-    if (f->firewall_sec == 0)
-        __builtin_printf(BG_GREEN "[F]" RESET);
-    else
-        __builtin_printf(BG_RED "[F]" RESET);
-    if (f->is_boosted_mask & f->is_sec_mask)
-        __builtin_printf(BG_RED "[B]" RESET "\n");
-    else
-        __builtin_printf(BG_GREEN "[B]" RESET "\n");
-
-    __builtin_printf("Virus: %d         Link: %d\n", f->sec_virus, f->sec_link);
-}
-
-static inline __attribute__((always_inline)) int field_evaluate(const field_t *__restrict__ f)
-{
-    return ((128 << f->fir_link) - (64 << f->fir_virus) - (128 << f->sec_link) + (64 << f->sec_virus)) + (int)f->forward_adv_fir - (int)f->forward_adv_sec + 256 * (int)f->is_swap_available_fir - 256 * (int)f->is_swap_available_sec;
-}
-
-#define PERFORM_ITERATION_FIR(shift_func, shift_count, forward_adv, is_boosted, current_card) \
-    if (secmask & new_pos_bitboard)                                                           \
-    {                                                                                         \
-        if (sec_link_mask & new_pos_bitboard)                                                 \
-        {                                                                                     \
-            field_t temp_field = *position;                                                   \
-                                                                                              \
-            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
-            temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                      \
-            temp_field.forward_adv_fir += forward_adv;                                        \
-            if (is_boosted)                                                                   \
-            {                                                                                 \
-                temp_field.is_boosted_mask ^= (cur_pos_bitboard);                             \
-                temp_field.is_boosted_mask |= (new_pos_bitboard);                             \
-            }                                                                                 \
-            else                                                                              \
-            {                                                                                 \
-                temp_field.is_boosted_mask &= ~(new_pos_bitboard);                            \
-            }                                                                                 \
-            temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                  \
-            temp_field.is_link_mask &= ~new_pos_bitboard;                                     \
-            if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                           \
-            {                                                                                 \
-                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                   \
-                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));            \
-            }                                                                                 \
-            else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                         \
-            {                                                                                 \
-                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);             \
-            }                                                                                 \
-            temp_field.is_sec_mask ^= new_pos_bitboard;                                       \
-            ++temp_field.fir_link;                                                            \
-                                                                                              \
-            WRITE_MOVE();                                                                     \
-        }                                                                                     \
-        else if (position->fir_virus < 3)                                                     \
-        {                                                                                     \
-            field_t temp_field = *position;                                                   \
-                                                                                              \
-            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
-            temp_field.forward_adv_sec -= (uint8_t)(new_pos_coord >> 3);                      \
-            temp_field.forward_adv_fir += forward_adv;                                        \
-            if (is_boosted)                                                                   \
-            {                                                                                 \
-                temp_field.is_boosted_mask ^= (cur_pos_bitboard);                             \
-                temp_field.is_boosted_mask |= (new_pos_bitboard);                             \
-            }                                                                                 \
-            else                                                                              \
-            {                                                                                 \
-                temp_field.is_boosted_mask &= ~(new_pos_bitboard);                            \
-            }                                                                                 \
-            temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                  \
-            if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                           \
-            {                                                                                 \
-                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                   \
-                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));            \
-            }                                                                                 \
-            else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                         \
-            {                                                                                 \
-                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);             \
-            }                                                                                 \
-            temp_field.is_sec_mask ^= new_pos_bitboard;                                       \
-            ++temp_field.fir_virus;                                                           \
-                                                                                              \
-            WRITE_MOVE();                                                                     \
-        }                                                                                     \
-    }                                                                                         \
-    else if ((firmask & new_pos_bitboard) == 0)                                               \
-    {                                                                                         \
-        field_t temp_field = *position;                                                       \
-                                                                                              \
-        temp_field.forward_adv_fir += forward_adv;                                            \
-        if (is_boosted)                                                                       \
-            temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);              \
-        temp_field.is_fir_mask ^= (cur_pos_bitboard | new_pos_bitboard);                      \
-        if (current_card == ITERATION_CURRENT_IS_FIRST_UNKNOWN)                               \
-        {                                                                                     \
-            uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                       \
-            temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                \
-        }                                                                                     \
-        else if (current_card == ITERATION_CURRENT_IS_FIRST_LINK)                             \
-        {                                                                                     \
-            temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                 \
-        }                                                                                     \
-                                                                                              \
-        WRITE_MOVE();                                                                         \
+#define PERFORM_ITERATION_SEC(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                             \
+    if (is_fir_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                   \
+    {                                                                                                                                                                                                                                                                                                     \
+        if (fir_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                             \
+        {                                                                                                                                                                                                                                                                                                 \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                \
+            WRITE_MOVE(is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                               \
+                       ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask ^ new_pos_bitboard) : ((is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
+                       ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                \
+                       (const extra_args_t){.raw = args.raw + 16777216ULL});                                                                                                                                                                                                                              \
+        }                                                                                                                                                                                                                                                                                                 \
+        else if (args.fields.sec_virus < 3)                                                                                                                                                                                                                                                               \
+        {                                                                                                                                                                                                                                                                                                 \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                \
+            WRITE_MOVE(is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                               \
+                       ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
+                       ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                \
+                       (const extra_args_t){.raw = args.raw + 1099511627776ULL});                                                                                                                                                                                                                         \
+        }                                                                                                                                                                                                                                                                                                 \
+    }                                                                                                                                                                                                                                                                                                     \
+    else if ((is_sec_mask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                       \
+    {                                                                                                                                                                                                                                                                                                     \
+        const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                    \
+        WRITE_MOVE(is_fir_mask, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                                      \
+                   ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                      \
+                   ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                        \
+                   args);                                                                                                                                                                                                                                                                                 \
     }
 
-#define PERFORM_ITERATION_SEC(shift_func, shift_count, forward_adv, is_boosted, current_card) \
-    if (firmask & new_pos_bitboard)                                                           \
-    {                                                                                         \
-        if (fir_link_mask & new_pos_bitboard)                                                 \
-        {                                                                                     \
-            field_t temp_field = *position;                                                   \
-                                                                                              \
-            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
-            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(new_pos_coord) >> 3);     \
-            temp_field.forward_adv_sec += forward_adv;                                        \
-            if (is_boosted)                                                                   \
-            {                                                                                 \
-                temp_field.is_boosted_mask ^= (cur_pos_bitboard);                             \
-                temp_field.is_boosted_mask |= (new_pos_bitboard);                             \
-            }                                                                                 \
-            else                                                                              \
-            {                                                                                 \
-                temp_field.is_boosted_mask &= ~(new_pos_bitboard);                            \
-            }                                                                                 \
-            temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                  \
-            temp_field.is_link_mask &= ~new_pos_bitboard;                                     \
-            if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                          \
-            {                                                                                 \
-                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                   \
-                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));            \
-            }                                                                                 \
-            else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                        \
-            {                                                                                 \
-                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);             \
-            }                                                                                 \
-            temp_field.is_fir_mask ^= new_pos_bitboard;                                       \
-            ++temp_field.sec_link;                                                            \
-                                                                                              \
-            WRITE_MOVE();                                                                     \
-        }                                                                                     \
-        else if (position->sec_virus < 3)                                                     \
-        {                                                                                     \
-            field_t temp_field = *position;                                                   \
-                                                                                              \
-            int new_pos_coord = get_ctz(new_pos_bitboard);                                    \
-            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(new_pos_coord) >> 3);     \
-            temp_field.forward_adv_sec += forward_adv;                                        \
-            if (is_boosted)                                                                   \
-            {                                                                                 \
-                temp_field.is_boosted_mask ^= (cur_pos_bitboard);                             \
-                temp_field.is_boosted_mask |= (new_pos_bitboard);                             \
-            }                                                                                 \
-            else                                                                              \
-            {                                                                                 \
-                temp_field.is_boosted_mask &= ~(new_pos_bitboard);                            \
-            }                                                                                 \
-            temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                  \
-            if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                          \
-            {                                                                                 \
-                uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                   \
-                temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));            \
-            }                                                                                 \
-            else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                        \
-            {                                                                                 \
-                temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);             \
-            }                                                                                 \
-            temp_field.is_fir_mask ^= new_pos_bitboard;                                       \
-            ++temp_field.sec_virus;                                                           \
-                                                                                              \
-            WRITE_MOVE();                                                                     \
-        }                                                                                     \
-    }                                                                                         \
-    else if ((secmask & new_pos_bitboard) == 0)                                               \
-    {                                                                                         \
-        field_t temp_field = *position;                                                       \
-                                                                                              \
-        temp_field.forward_adv_sec += forward_adv;                                            \
-        if (is_boosted)                                                                       \
-            temp_field.is_boosted_mask ^= (cur_pos_bitboard | new_pos_bitboard);              \
-        temp_field.is_sec_mask ^= (cur_pos_bitboard | new_pos_bitboard);                      \
-        if (current_card == ITERATION_CURRENT_IS_SECOND_UNKNOWN)                              \
-        {                                                                                     \
-            uint64_t mask = temp_field.is_link_mask & cur_pos_bitboard;                       \
-            temp_field.is_link_mask ^= (mask | (mask shift_func shift_count));                \
-        }                                                                                     \
-        else if (current_card == ITERATION_CURRENT_IS_SECOND_LINK)                            \
-        {                                                                                     \
-            temp_field.is_link_mask ^= (cur_pos_bitboard | new_pos_bitboard);                 \
-        }                                                                                     \
-                                                                                              \
-        WRITE_MOVE();                                                                         \
-    }
-
-#if defined(__clang__)
-static __attribute__((cold)) possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
-#elif defined(__GNUC__)
-static __attribute__((optimize("Os"), cold)) possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
-#else
-static possible_moves_t possible_moves(const field_t *__restrict__ position, const bool player)
-#endif
-{
-#define WRITE_MOVE()                               \
-    do                                             \
-    {                                              \
-        res.moves[res.moves_count++] = temp_field; \
+#define WRITE_MOVE(fm, sm, lm, bm, as)                                  \
+    do                                                                  \
+    {                                                                   \
+        *out_field_ptr = (const field_t){(fm), (sm), (lm), (bm), (as)}; \
+        ++out_field_ptr;                                                \
     } while (0)
 
-    possible_moves_t res;
-    res.moves_count = 0;
+#if defined(__clang__)
+static __attribute__((cold)) void possible_moves_max(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                                                     const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#elif defined(__GNUC__)
+static __attribute__((optimize("Os"), cold)) void possible_moves_max(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                                                                     const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#else
+static void possible_moves_max(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                               const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#endif
+{
+    field_t *__restrict__ out_field_ptr = (field_t *__restrict__)possible_moves_buf;
 
-    const uint64_t firmask = position->is_fir_mask, secmask = position->is_sec_mask;
+    uint64_t m;
+    uint64_t fir_link_m[4];
+    uint64_t fir_virus_m[4];
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t fir_virus_mask = is_fir_mask ^ fir_link_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_fir_mask;
+    const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_sec & 1) << (args.fields.firewall_sec >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
 
-    if (player)
+    // Lets be nice and use less ctz/clz calls when only bitboard is desired
+    m = fir_link_mask & (~cur_boosted_mask);
+    fir_link_m[0] = (m) & (-m);
+    m &= (m - 1);
+    fir_link_m[1] = (m) & (-m);
+    m &= (m - 1);
+    fir_link_m[2] = (m) & (-m);
+    m &= (m - 1);
+    fir_link_m[3] = m;
+
+    m = fir_virus_mask & (~cur_boosted_mask);
+    fir_virus_m[0] = (m) & (-m);
+    m &= (m - 1);
+    fir_virus_m[1] = (m) & (-m);
+    m &= (m - 1);
+    fir_virus_m[2] = (m) & (-m);
+    m &= (m - 1);
+    fir_virus_m[3] = m;
+
+    if (__builtin_expect((fir_link_mask & 8ULL) != 0, 0))
     {
-        const uint64_t fir_link_mask = position->is_link_mask & firmask;
-        const uint64_t fir_virus_mask = firmask ^ fir_link_mask;
-        const uint64_t sec_link_mask = position->is_link_mask ^ fir_link_mask;
+        WRITE_MOVE(is_fir_mask ^ 8ULL, is_sec_mask, is_link_mask ^ 8ULL, is_boosted_mask & ~8ULL, (const extra_args_t){.raw = args.raw + 65536ULL});
+    }
 
-        const uint64_t cur_boosted_mask = position->is_boosted_mask & firmask;
-        const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_sec & 1) << (position->firewall_sec >> 1);
-        const uint64_t free_mask = ~(firmask | secmask | enemy_firewall_mask);
+    if (__builtin_expect((fir_link_mask & 16ULL) != 0, 0))
+    {
+        WRITE_MOVE(is_fir_mask ^ 16ULL, is_sec_mask, is_link_mask ^ 16ULL, is_boosted_mask & ~16ULL, (const extra_args_t){.raw = args.raw + 65536ULL});
+    }
 
-        if (__builtin_expect(fir_link_mask & 8ULL, 0))
+    if (__builtin_expect((((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL) != 0, 0))
+    {
+        WRITE_MOVE(is_fir_mask ^ cur_boosted_mask, is_sec_mask, is_link_mask ^ cur_boosted_mask, is_boosted_mask ^ cur_boosted_mask, (const extra_args_t){.raw = args.raw + 65536ULL});
+    }
+
+    if (cur_boosted_mask)
+    {
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
 
-            temp_field.forward_adv_fir -= (uint8_t)7;
-            temp_field.is_boosted_mask &= ~8ULL;
-            temp_field.is_fir_mask &= ~8ULL;
-            temp_field.is_link_mask &= ~8ULL;
-            ++temp_field.fir_link;
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-            WRITE_MOVE();
-        }
-        if (__builtin_expect(fir_link_mask & 16ULL, 0))
-        {
-            field_t temp_field = *position;
-
-            temp_field.forward_adv_fir -= (uint8_t)7;
-            temp_field.is_boosted_mask &= ~16ULL;
-            temp_field.is_fir_mask &= ~16ULL;
-            temp_field.is_link_mask &= ~16ULL;
-            ++temp_field.fir_link;
-
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
-
-        if (__builtin_expect(((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL, 0))
+        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            temp_field.forward_adv_fir -= (uint8_t)(__builtin_clzll(cur_boosted_mask) >> 3);
-            temp_field.is_boosted_mask &= ~cur_boosted_mask;
-            temp_field.is_fir_mask &= ~cur_boosted_mask;
-            temp_field.is_link_mask &= ~cur_boosted_mask;
-            ++temp_field.fir_link;
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (cur_boosted_mask == 0)
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
         {
-            uint64_t temp = fir_virus_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
 
-            while (temp)
-            {
-                const uint64_t pos = extract_lsb(temp); // back -> front
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                field_t temp_field = *position;
-
-                temp_field.is_boosted_mask |= pos;
-
-                WRITE_MOVE();
-
-                clear_lowest_set_bit(temp, pos);
-            }
-        }
-        else
-        {
-            const uint64_t cur_pos_bitboard = cur_boosted_mask;
-            const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
-
-            if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-                RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~firmask);
-
-            if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-                RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-            }
+            PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        uint64_t unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
         {
-            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
-            const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
 
-            if (cur_pos_bitboard & (legal_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & (legal_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
         {
-            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
-            const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
 
-            if (cur_pos_bitboard & (legal_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & (legal_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME(secmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
         {
-            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            if (cur_pos_bitboard & (free_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            if (cur_pos_bitboard & (free_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-            }
-
-            clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
         {
-            const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
 
-            if (cur_pos_bitboard & (free_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            if (cur_pos_bitboard & (free_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-            }
-
-            clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (position->firewall_fir == 0)
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
         {
-            uint64_t temp = fir_link_mask & 16717361816799281127ULL;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            while (temp)
-            {
-                const int bit_pos = get_ctz(temp);
-                const uint64_t pos = (1ULL << bit_pos); // front -> back
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                field_t temp_field = *position;
-
-                temp_field.firewall_fir = (uint8_t)((bit_pos << 1) | 1);
-
-                WRITE_MOVE();
-
-                clear_lowest_set_bit(temp, pos);
-            }
-
-            temp = (fir_virus_mask & 16717361816799281127ULL) & cur_boosted_mask;
-
-            if (temp)
-            {
-                const int bit_pos = get_ctz(temp);
-
-                field_t temp_field = *position;
-
-                temp_field.firewall_fir = (uint8_t)((bit_pos << 1) | 1);
-
-                WRITE_MOVE();
-            }
-        }
-        else
-        {
-            field_t temp_field = *position;
-
-            temp_field.firewall_fir = 0;
-
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (position->is_swap_available_fir)
+        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
         {
-            uint64_t link_mask = fir_link_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            while (link_mask)
-            {
-                const uint64_t link_pos = extract_lsb(link_mask); // front -> back
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                uint64_t virus_mask = fir_virus_mask;
-
-                while (virus_mask)
-                {
-                    const uint64_t virus_pos = extract_lsb(virus_mask); // front -> back
-
-                    field_t temp_field = *position;
-
-                    temp_field.is_swap_available_fir = 0;
-                    temp_field.is_link_mask ^= (link_pos | virus_pos);
-
-                    WRITE_MOVE();
-
-                    clear_lowest_set_bit(virus_mask, virus_pos);
-                }
-
-                clear_lowest_set_bit(link_mask, link_pos);
-            }
+            PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (cur_boosted_mask == 0)
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
         {
-            uint64_t temp = fir_link_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
 
-            while (temp)
-            {
-                const uint64_t pos = extract_lsb(temp); // back -> front
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-                field_t temp_field = *position;
-
-                temp_field.is_boosted_mask |= pos;
-
-                WRITE_MOVE();
-
-                clear_lowest_set_bit(temp, pos);
-            }
+            PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
-        else
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
 
-            temp_field.is_boosted_mask &= temp_field.is_sec_mask;
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+    }
+
+    if (cur_boosted_mask == 0)
+    {
+        uint64_t temp = fir_virus_mask;
+
+        while (temp)
+        {
+            const uint64_t pos = extract_lsb(temp); // back -> front
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
+
+            clear_lowest_set_bit(temp, pos);
         }
     }
     else
     {
-        const uint64_t fir_link_mask = position->is_link_mask & firmask;
-        const uint64_t sec_link_mask = position->is_link_mask ^ fir_link_mask;
-        const uint64_t sec_virus_mask = secmask ^ sec_link_mask;
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_fir_mask);
 
-        const uint64_t cur_boosted_mask = position->is_boosted_mask & secmask;
-        const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_fir & 1) << (position->firewall_fir >> 1);
-        const uint64_t free_mask = ~(firmask | secmask | enemy_firewall_mask);
-
-        if (__builtin_expect(sec_link_mask & 1152921504606846976ULL, 0))
+        if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
 
-            temp_field.forward_adv_sec -= (uint8_t)7;
-            temp_field.is_boosted_mask &= ~1152921504606846976ULL;
-            temp_field.is_sec_mask &= ~1152921504606846976ULL;
-            temp_field.is_link_mask &= ~1152921504606846976ULL;
-            ++temp_field.sec_link;
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (__builtin_expect(sec_link_mask & 576460752303423488ULL, 0))
+        if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            temp_field.forward_adv_sec -= (uint8_t)7;
-            temp_field.is_boosted_mask &= ~576460752303423488ULL;
-            temp_field.is_sec_mask &= ~576460752303423488ULL;
-            temp_field.is_link_mask &= ~576460752303423488ULL;
-            ++temp_field.sec_link;
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
-
-        if (__builtin_expect(((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL, 0))
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
 
-            temp_field.forward_adv_sec -= (uint8_t)(get_ctz(cur_boosted_mask) >> 3);
-            temp_field.is_boosted_mask &= ~cur_boosted_mask;
-            temp_field.is_sec_mask &= ~cur_boosted_mask;
-            temp_field.is_link_mask &= ~cur_boosted_mask;
-            ++temp_field.sec_link;
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (cur_boosted_mask == 0)
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
         {
-            uint64_t temp = sec_virus_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
 
-            while (temp)
-            {
-                const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                field_t temp_field = *position;
-
-                temp_field.is_boosted_mask |= pos;
-
-                WRITE_MOVE();
-
-                clear_highest_set_bit(temp, pos);
-            }
-        }
-        else
-        {
-            const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
-            const uint64_t cur_pos_bitboard = cur_boosted_mask;
-
-            if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-                PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~secmask);
-
-            if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
-
-            if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-                RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-            }
+            PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        uint64_t unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
         {
-            const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
-            const uint64_t legal_mask = (firmask & (~enemy_firewall_mask));
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
 
-            if (cur_pos_bitboard & (legal_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & (legal_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
         {
-            const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
-            const uint64_t legal_mask = (firmask & (~enemy_firewall_mask));
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            if (cur_pos_bitboard & (legal_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & (legal_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME(firmask & new_pos_bitboard);
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
         {
-            const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
 
-            if (cur_pos_bitboard & (free_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            if (cur_pos_bitboard & (free_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-            }
-
-            clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
-
-        while (unboosted_cards_mask)
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
         {
-            const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            if (cur_pos_bitboard & (free_mask >> 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            if (cur_pos_bitboard & (free_mask << 8))
-            {
-                const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-                RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-                PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-            }
-
-            clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+            PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (position->firewall_sec == 0)
+        if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
         {
-            uint64_t temp = sec_link_mask & 16717361816799281127ULL;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            while (temp)
-            {
-                const int bit_pos = 63 - __builtin_clzll(temp);
-                const uint64_t pos = (1ULL << bit_pos); // front -> back
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                field_t temp_field = *position;
-
-                temp_field.firewall_sec = (uint8_t)((bit_pos << 1) | 1);
-
-                WRITE_MOVE();
-
-                clear_highest_set_bit(temp, pos);
-            }
-
-            temp = (sec_virus_mask & 16717361816799281127ULL) & cur_boosted_mask;
-
-            if (temp)
-            {
-                const int bit_pos = 63 - __builtin_clzll(temp);
-
-                field_t temp_field = *position;
-
-                temp_field.firewall_sec = (uint8_t)((bit_pos << 1) | 1);
-
-                WRITE_MOVE();
-            }
-        }
-        else
-        {
-            field_t temp_field = *position;
-
-            temp_field.firewall_sec = 0;
-
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (position->is_swap_available_sec)
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
         {
-            uint64_t link_mask = sec_link_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
 
-            while (link_mask)
-            {
-                const uint64_t link_pos = (1ULL << (63 - __builtin_clzll(link_mask))); // front -> back
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                uint64_t virus_mask = sec_virus_mask;
-
-                while (virus_mask)
-                {
-                    const uint64_t virus_pos = (1ULL << (63 - __builtin_clzll(virus_mask))); // front -> back
-
-                    field_t temp_field = *position;
-
-                    temp_field.is_swap_available_sec = 0;
-                    temp_field.is_link_mask ^= (link_pos | virus_pos);
-
-                    WRITE_MOVE();
-
-                    clear_highest_set_bit(virus_mask, virus_pos);
-                }
-
-                clear_highest_set_bit(link_mask, link_pos);
-            }
+            PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (cur_boosted_mask == 0)
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
         {
-            uint64_t temp = sec_link_mask;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
 
-            while (temp)
-            {
-                const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-                field_t temp_field = *position;
-
-                temp_field.is_boosted_mask |= pos;
-
-                WRITE_MOVE();
-
-                clear_highest_set_bit(temp, pos);
-            }
+            PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
-        else
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
         {
-            field_t temp_field = *position;
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
 
-            temp_field.is_boosted_mask &= temp_field.is_fir_mask;
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
-            WRITE_MOVE();
+            PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
     }
 
-    return res;
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = fir_virus_m[i];
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = fir_link_m[i];
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = fir_link_m[i];
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = fir_virus_m[i];
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+    }
+
+    if (args.fields.firewall_fir == 0)
+    {
+        uint64_t temp = fir_link_mask & 16717361816799281127ULL;
+
+        while (temp)
+        {
+            const int bit_pos = __builtin_ctzll(temp);
+            const uint64_t pos = (1ULL << bit_pos); // front -> back
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
+
+            clear_lowest_set_bit(temp, pos);
+        }
+
+        temp = (fir_virus_mask & 16717361816799281127ULL) & cur_boosted_mask;
+
+        if (temp)
+        {
+            const int bit_pos = __builtin_ctzll(temp);
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
+        }
+    }
+    else
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw & 18446744073709551360ULL});
+    }
+
+    if (args.fields.is_swap_available_fir)
+    {
+        uint64_t link_mask = fir_link_mask;
+
+        while (link_mask)
+        {
+            const uint64_t link_pos = extract_lsb(link_mask); // front -> back
+
+            uint64_t virus_mask = fir_virus_mask;
+
+            while (virus_mask)
+            {
+                const uint64_t virus_pos = extract_lsb(virus_mask); // front -> back
+
+                WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask, (const extra_args_t){.raw = args.raw ^ 281474976710656ULL});
+
+                clear_lowest_set_bit(virus_mask, virus_pos);
+            }
+
+            clear_lowest_set_bit(link_mask, link_pos);
+        }
+    }
+
+    if (cur_boosted_mask == 0)
+    {
+        uint64_t temp = fir_link_mask;
+
+        while (temp)
+        {
+            const uint64_t pos = extract_lsb(temp); // back -> front
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
+
+            clear_lowest_set_bit(temp, pos);
+        }
+    }
+    else
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
+    }
+
+    RNAB_ASSUME((int)(((uintptr_t)out_field_ptr - (uintptr_t)possible_moves_buf) / 40) <= 128);
+
+    *possible_moves_buf_moves_count = (int)(((uintptr_t)out_field_ptr - (uintptr_t)possible_moves_buf) / 40);
+}
+
+#if defined(__clang__)
+static __attribute__((cold)) void possible_moves_min(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                                                     const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#elif defined(__GNUC__)
+static __attribute__((optimize("Os"), cold)) void possible_moves_min(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                                                                     const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#else
+static void possible_moves_min(const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask,
+                               const extra_args_t args, const field_t *__restrict__ possible_moves_buf, int32_t *__restrict__ possible_moves_buf_moves_count)
+#endif
+{
+    field_t *__restrict__ out_field_ptr = (field_t *__restrict__)possible_moves_buf;
+
+    uint64_t m;
+    uint64_t sec_link_m[4];
+    uint64_t sec_virus_m[4];
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+    const uint64_t sec_virus_mask = is_sec_mask ^ sec_link_mask;
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_sec_mask;
+    const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_fir & 1) << (args.fields.firewall_fir >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
+
+    // Lets be nice and use less ctz/clz calls when only bitboard is desired
+    m = sec_link_mask & (~cur_boosted_mask);
+    sec_link_m[3] = (m) & (-m);
+    m &= (m - 1);
+    sec_link_m[2] = (m) & (-m);
+    m &= (m - 1);
+    sec_link_m[1] = (m) & (-m);
+    m &= (m - 1);
+    sec_link_m[0] = m;
+
+    m = sec_virus_mask & (~cur_boosted_mask);
+    sec_virus_m[3] = (m) & (-m);
+    m &= (m - 1);
+    sec_virus_m[2] = (m) & (-m);
+    m &= (m - 1);
+    sec_virus_m[1] = (m) & (-m);
+    m &= (m - 1);
+    sec_virus_m[0] = m;
+
+    if (__builtin_expect((sec_link_mask & 1152921504606846976ULL) != 0, 0))
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask ^ 1152921504606846976ULL, is_link_mask ^ 1152921504606846976ULL, is_boosted_mask & ~1152921504606846976ULL, (const extra_args_t){.raw = args.raw + 16777216ULL});
+    }
+
+    if (__builtin_expect((sec_link_mask & 576460752303423488ULL) != 0, 0))
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask ^ 576460752303423488ULL, is_link_mask ^ 576460752303423488ULL, is_boosted_mask & ~576460752303423488ULL, (const extra_args_t){.raw = args.raw + 16777216ULL});
+    }
+
+    if (__builtin_expect((((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL) != 0, 0))
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask ^ cur_boosted_mask, is_link_mask ^ cur_boosted_mask, is_boosted_mask ^ cur_boosted_mask, (const extra_args_t){.raw = args.raw + 16777216ULL});
+    }
+
+    if (cur_boosted_mask)
+    {
+        const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+    }
+
+    if (cur_boosted_mask == 0)
+    {
+        uint64_t temp = sec_virus_mask;
+
+        while (temp)
+        {
+            const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
+
+            clear_highest_set_bit(temp, pos);
+        }
+    }
+    else
+    {
+        const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_sec_mask);
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = sec_virus_m[i];
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = sec_link_m[i];
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = sec_link_m[i];
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t cur_pos_bitboard = sec_virus_m[i];
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+    }
+
+    if (args.fields.firewall_sec == 0)
+    {
+        uint64_t temp = sec_link_mask & 16717361816799281127ULL;
+
+        while (temp)
+        {
+            const int bit_pos = 63 - __builtin_clzll(temp);
+            const uint64_t pos = (1ULL << bit_pos);
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw | 256 | (bit_pos << 9)});
+
+            clear_highest_set_bit(temp, pos);
+        }
+
+        temp = (sec_virus_mask & 16717361816799281127ULL) & cur_boosted_mask;
+
+        if (temp)
+        {
+            const int bit_pos = 63 - __builtin_clzll(temp);
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw | 256 | (bit_pos << 9)});
+        }
+    }
+    else
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, (const extra_args_t){.raw = args.raw & 18446744073709486335ULL});
+    }
+
+    if (args.fields.is_swap_available_sec)
+    {
+        uint64_t link_mask = sec_link_mask;
+
+        while (link_mask)
+        {
+            const uint64_t link_pos = (1ULL << (63 - __builtin_clzll(link_mask))); // front -> back
+
+            uint64_t virus_mask = sec_virus_mask;
+
+            while (virus_mask)
+            {
+                const uint64_t virus_pos = (1ULL << (63 - __builtin_clzll(virus_mask))); // front -> back
+
+                WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask, (const extra_args_t){.raw = args.raw ^ 72057594037927936ULL});
+
+                clear_highest_set_bit(virus_mask, virus_pos);
+            }
+
+            clear_highest_set_bit(link_mask, link_pos);
+        }
+    }
+
+    if (cur_boosted_mask == 0)
+    {
+        uint64_t temp = sec_link_mask;
+
+        while (temp)
+        {
+            const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
+
+            WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
+
+            clear_highest_set_bit(temp, pos);
+        }
+    }
+    else
+    {
+        WRITE_MOVE(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
+    }
+
+    RNAB_ASSUME((int)(((uintptr_t)out_field_ptr - (uintptr_t)possible_moves_buf) / 40) <= 128);
+
+    *possible_moves_buf_moves_count = (int)(((uintptr_t)out_field_ptr - (uintptr_t)possible_moves_buf) / 40);
 }
 
 #undef WRITE_MOVE
 #undef PERFORM_ITERATION_FIR
 #undef PERFORM_ITERATION_SEC
 
-#define PERFORM_ITERATION_FIR(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                                                                          \
-    if (secmask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                                    \
-    {                                                                                                                                                                                                                                                                                                                                                  \
-        if (sec_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                          \
-        {                                                                                                                                                                                                                                                                                                                                              \
-            const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                   \
-            const field_t temp_field = {position->is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), position->is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                                       \
-                                        ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (position->is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (position->is_link_mask ^ new_pos_bitboard) : ((position->is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
-                                        ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                        \
-                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(get_ctz(new_pos_bitboard) >> 3),                                                                                                                                                                                       \
-                                        position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                \
-                                        position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                          \
-                                        position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                             \
-                                                                                                                                                                                                                                                                                                                                                       \
-            BRANCH_ENTER_MAX("capture link");                                                                                                                                                                                                                                                                                                          \
-            int reschild = (depth != 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                  \
-            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                                         \
-            score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                             \
-            alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                             \
-            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                         \
-            {                                                                                                                                                                                                                                                                                                                                          \
-                TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                                     \
-            }                                                                                                                                                                                                                                                                                                                                          \
-        }                                                                                                                                                                                                                                                                                                                                              \
-        else if (position->fir_virus < 3)                                                                                                                                                                                                                                                                                                              \
-        {                                                                                                                                                                                                                                                                                                                                              \
-            const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                   \
-            const field_t temp_field = {position->is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), position->is_sec_mask ^ new_pos_bitboard,                                                                                                                                                                                                       \
-                                        ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
-                                        ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                        \
-                                        position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec - (uint8_t)(get_ctz(new_pos_bitboard) >> 3),                                                                                                                                                                                       \
-                                        position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                \
-                                        position->fir_link, position->sec_link, position->fir_virus + 1, position->sec_virus,                                                                                                                                                                                                                          \
-                                        position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                             \
-                                                                                                                                                                                                                                                                                                                                                       \
-            int reschild;                                                                                                                                                                                                                                                                                                                              \
-            if (is_boosted || current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                                                                                                                                                                                                         \
-            {                                                                                                                                                                                                                                                                                                                                          \
-                BRANCH_ENTER_MAX("capture virus boosted || link");                                                                                                                                                                                                                                                                                     \
-                reschild = (depth > 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                   \
-                BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                                     \
-            }                                                                                                                                                                                                                                                                                                                                          \
-            else                                                                                                                                                                                                                                                                                                                                       \
-            {                                                                                                                                                                                                                                                                                                                                          \
-                BRANCH_ENTER_MAX("capture virus not boosted");                                                                                                                                                                                                                                                                                         \
-                if (depth > 0)                                                                                                                                                                                                                                                                                                                         \
-                {                                                                                                                                                                                                                                                                                                                                      \
-                    reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);                                                                                                                                                                                                                                                                      \
-                    if (reschild > alpha && beta > alpha + 1)                                                                                                                                                                                                                                                                                          \
-                        reschild = minimax_min(depth, alpha, beta, &temp_field);                                                                                                                                                                                                                                                                       \
-                }                                                                                                                                                                                                                                                                                                                                      \
-                else                                                                                                                                                                                                                                                                                                                                   \
-                    reschild = field_evaluate(&temp_field);                                                                                                                                                                                                                                                                                            \
-                                                                                                                                                                                                                                                                                                                                                       \
-                BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                                     \
-            }                                                                                                                                                                                                                                                                                                                                          \
-            score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                             \
-            alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                             \
-            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                         \
-            {                                                                                                                                                                                                                                                                                                                                          \
-                TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                                     \
-            }                                                                                                                                                                                                                                                                                                                                          \
-        }                                                                                                                                                                                                                                                                                                                                              \
-    }                                                                                                                                                                                                                                                                                                                                                  \
-    else if ((firmask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                                                                        \
-    {                                                                                                                                                                                                                                                                                                                                                  \
-        const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                       \
-        const field_t temp_field = {position->is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), position->is_sec_mask,                                                                                                                                                                                                                              \
-                                    ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                      \
-                                    ((is_boosted) ? (position->is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (position->is_boosted_mask)),                                                                                                                                                                                                \
-                                    position->forward_adv_fir + (uint8_t)forward_adv, position->forward_adv_sec,                                                                                                                                                                                                                                       \
-                                    position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                    \
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                                  \
-                                    position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                                 \
-                                                                                                                                                                                                                                                                                                                                                       \
-        int reschild;                                                                                                                                                                                                                                                                                                                                  \
-        if (is_boosted)                                                                                                                                                                                                                                                                                                                                \
-        {                                                                                                                                                                                                                                                                                                                                              \
-            BRANCH_ENTER_MAX("move boosted");                                                                                                                                                                                                                                                                                                          \
-            reschild = (depth > 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                       \
-            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                                         \
-        }                                                                                                                                                                                                                                                                                                                                              \
-        else                                                                                                                                                                                                                                                                                                                                           \
-        {                                                                                                                                                                                                                                                                                                                                              \
-            BRANCH_ENTER_MAX("move not boosted");                                                                                                                                                                                                                                                                                                      \
-            if (depth > 0)                                                                                                                                                                                                                                                                                                                             \
-            {                                                                                                                                                                                                                                                                                                                                          \
-                reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);                                                                                                                                                                                                                                                                          \
-                if (reschild > alpha && beta > alpha + 1)                                                                                                                                                                                                                                                                                              \
-                    reschild = minimax_min(depth, alpha, beta, &temp_field);                                                                                                                                                                                                                                                                           \
-            }                                                                                                                                                                                                                                                                                                                                          \
-            else                                                                                                                                                                                                                                                                                                                                       \
-                reschild = field_evaluate(&temp_field);                                                                                                                                                                                                                                                                                                \
-                                                                                                                                                                                                                                                                                                                                                       \
-            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                                         \
-        }                                                                                                                                                                                                                                                                                                                                              \
-        score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                                 \
-        alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                                 \
-        if (beta <= alpha)                                                                                                                                                                                                                                                                                                                             \
-        {                                                                                                                                                                                                                                                                                                                                              \
-            TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                                         \
-        }                                                                                                                                                                                                                                                                                                                                              \
+#define PERFORM_ITERATION_FIR(shift_func, shift_count, forward_adv, is_boosted, current_card)  \
+    if (is_sec_mask & new_pos_bitboard)                                                        \
+    {                                                                                          \
+        if (sec_link_mask & new_pos_bitboard)                                                  \
+        {                                                                                      \
+            const int32_t new_eval = evaluation + cur_pos_bit + (128 << args.fields.fir_link); \
+                                                                                               \
+            score = (new_eval > score) ? new_eval : score;                                     \
+            alpha = (new_eval > alpha) ? new_eval : alpha;                                     \
+            if (beta <= alpha)                                                                 \
+            {                                                                                  \
+                return score;                                                                  \
+            }                                                                                  \
+        }                                                                                      \
+        else if (args.fields.fir_virus < 3)                                                    \
+        {                                                                                      \
+            const int32_t new_eval = evaluation + cur_pos_bit - (64 << args.fields.fir_virus); \
+                                                                                               \
+            score = (new_eval > score) ? new_eval : score;                                     \
+            alpha = (new_eval > alpha) ? new_eval : alpha;                                     \
+            if (beta <= alpha)                                                                 \
+            {                                                                                  \
+                return score;                                                                  \
+            }                                                                                  \
+        }                                                                                      \
+    }                                                                                          \
+    else if ((is_fir_mask & new_pos_bitboard) == 0)                                            \
+    {                                                                                          \
+        const int32_t new_eval = evaluation + (forward_adv);                                   \
+                                                                                               \
+        score = (new_eval > score) ? new_eval : score;                                         \
+        alpha = (new_eval > alpha) ? new_eval : alpha;                                         \
+        if (beta <= alpha)                                                                     \
+        {                                                                                      \
+            return score;                                                                      \
+        }                                                                                      \
     }
 
-#define PERFORM_ITERATION_SEC(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                                                                            \
-    if (firmask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                                      \
-    {                                                                                                                                                                                                                                                                                                                                                    \
-        if (fir_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                            \
-        {                                                                                                                                                                                                                                                                                                                                                \
-            const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                     \
-            const field_t temp_field = {position->is_fir_mask ^ new_pos_bitboard, position->is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                         \
-                                        ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (position->is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (position->is_link_mask ^ new_pos_bitboard) : ((position->is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
-                                        ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                          \
-                                        position->forward_adv_fir - (uint8_t)(__builtin_clzll(new_pos_bitboard) >> 3), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                                 \
-                                        position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                  \
-                                        position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                            \
-                                        position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                               \
-                                                                                                                                                                                                                                                                                                                                                         \
-            BRANCH_ENTER_MIN("capture link");                                                                                                                                                                                                                                                                                                            \
-            int reschild = (depth != 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                    \
-            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                           \
-            score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                               \
-            beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                                  \
-            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                           \
-            {                                                                                                                                                                                                                                                                                                                                            \
-                TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                                       \
-            }                                                                                                                                                                                                                                                                                                                                            \
-        }                                                                                                                                                                                                                                                                                                                                                \
-        else if (position->sec_virus < 3)                                                                                                                                                                                                                                                                                                                \
-        {                                                                                                                                                                                                                                                                                                                                                \
-            const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                     \
-            const field_t temp_field = {position->is_fir_mask ^ new_pos_bitboard, position->is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                         \
-                                        ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                  \
-                                        ((is_boosted) ? ((position->is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (position->is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                          \
-                                        position->forward_adv_fir - (uint8_t)(__builtin_clzll(new_pos_bitboard) >> 3), position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                                 \
-                                        position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                  \
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus + 1,                                                                                                                                                                                                                            \
-                                        position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                               \
-                                                                                                                                                                                                                                                                                                                                                         \
-            int reschild;                                                                                                                                                                                                                                                                                                                                \
-            if (is_boosted || current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                                                                                                                                                                                                          \
-            {                                                                                                                                                                                                                                                                                                                                            \
-                BRANCH_ENTER_MIN("capture virus boosted || link");                                                                                                                                                                                                                                                                                       \
-                reschild = (depth > 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                     \
-                BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                       \
-            }                                                                                                                                                                                                                                                                                                                                            \
-            else                                                                                                                                                                                                                                                                                                                                         \
-            {                                                                                                                                                                                                                                                                                                                                            \
-                BRANCH_ENTER_MIN("capture virus not boosted");                                                                                                                                                                                                                                                                                           \
-                if (depth > 0)                                                                                                                                                                                                                                                                                                                           \
-                {                                                                                                                                                                                                                                                                                                                                        \
-                    reschild = minimax_max(depth, beta - 1, beta, &temp_field);                                                                                                                                                                                                                                                                          \
-                    if (reschild < beta && alpha < beta - 1)                                                                                                                                                                                                                                                                                             \
-                        reschild = minimax_max(depth, alpha, beta, &temp_field);                                                                                                                                                                                                                                                                         \
-                }                                                                                                                                                                                                                                                                                                                                        \
-                else                                                                                                                                                                                                                                                                                                                                     \
-                    reschild = field_evaluate(&temp_field);                                                                                                                                                                                                                                                                                              \
-                                                                                                                                                                                                                                                                                                                                                         \
-                BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                       \
-            }                                                                                                                                                                                                                                                                                                                                            \
-            score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                               \
-            beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                                  \
-            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                           \
-            {                                                                                                                                                                                                                                                                                                                                            \
-                TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                                       \
-            }                                                                                                                                                                                                                                                                                                                                            \
-        }                                                                                                                                                                                                                                                                                                                                                \
-    }                                                                                                                                                                                                                                                                                                                                                    \
-    else if ((secmask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                                                                          \
-    {                                                                                                                                                                                                                                                                                                                                                    \
-        const uint64_t unknown_mask = position->is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                         \
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                                                                \
-                                    ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (position->is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (position->is_link_mask) : ((position->is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                      \
-                                    ((is_boosted) ? (position->is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (position->is_boosted_mask)),                                                                                                                                                                                                  \
-                                    position->forward_adv_fir, position->forward_adv_sec + (uint8_t)forward_adv,                                                                                                                                                                                                                                         \
-                                    position->firewall_fir, position->firewall_sec,                                                                                                                                                                                                                                                                      \
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,                                                                                                                                                                                                                                    \
-                                    position->is_swap_available_fir, position->is_swap_available_sec};                                                                                                                                                                                                                                                   \
-                                                                                                                                                                                                                                                                                                                                                         \
-        int reschild;                                                                                                                                                                                                                                                                                                                                    \
-        if (is_boosted)                                                                                                                                                                                                                                                                                                                                  \
-        {                                                                                                                                                                                                                                                                                                                                                \
-            BRANCH_ENTER_MIN("move boosted");                                                                                                                                                                                                                                                                                                            \
-            reschild = (depth > 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);                                                                                                                                                                                                                                         \
-            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                           \
-        }                                                                                                                                                                                                                                                                                                                                                \
-        else                                                                                                                                                                                                                                                                                                                                             \
-        {                                                                                                                                                                                                                                                                                                                                                \
-            BRANCH_ENTER_MIN("move not boosted");                                                                                                                                                                                                                                                                                                        \
-            if (depth > 0)                                                                                                                                                                                                                                                                                                                               \
-            {                                                                                                                                                                                                                                                                                                                                            \
-                reschild = minimax_max(depth, beta - 1, beta, &temp_field);                                                                                                                                                                                                                                                                              \
-                if (reschild < beta && alpha < beta - 1)                                                                                                                                                                                                                                                                                                 \
-                    reschild = minimax_max(depth, alpha, beta, &temp_field);                                                                                                                                                                                                                                                                             \
-            }                                                                                                                                                                                                                                                                                                                                            \
-            else                                                                                                                                                                                                                                                                                                                                         \
-                reschild = field_evaluate(&temp_field);                                                                                                                                                                                                                                                                                                  \
-                                                                                                                                                                                                                                                                                                                                                         \
-            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                           \
-        }                                                                                                                                                                                                                                                                                                                                                \
-        score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                                   \
-        beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                                      \
-        if (beta <= alpha)                                                                                                                                                                                                                                                                                                                               \
-        {                                                                                                                                                                                                                                                                                                                                                \
-            TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                                           \
-        }                                                                                                                                                                                                                                                                                                                                                \
+#define PERFORM_ITERATION_SEC(shift_func, shift_count, forward_adv, is_boosted, current_card)  \
+    if (is_fir_mask & new_pos_bitboard)                                                        \
+    {                                                                                          \
+        if (fir_link_mask & new_pos_bitboard)                                                  \
+        {                                                                                      \
+            const int32_t new_eval = evaluation - cur_pos_bit - (128 << args.fields.sec_link); \
+                                                                                               \
+            score = (new_eval < score) ? new_eval : score;                                     \
+            beta = (new_eval < beta) ? new_eval : beta;                                        \
+            if (beta <= alpha)                                                                 \
+            {                                                                                  \
+                return score;                                                                  \
+            }                                                                                  \
+        }                                                                                      \
+        else if (args.fields.sec_virus < 3)                                                    \
+        {                                                                                      \
+            const int32_t new_eval = evaluation - cur_pos_bit + (64 << args.fields.sec_virus); \
+                                                                                               \
+            score = (new_eval < score) ? new_eval : score;                                     \
+            beta = (new_eval < beta) ? new_eval : beta;                                        \
+            if (beta <= alpha)                                                                 \
+            {                                                                                  \
+                return score;                                                                  \
+            }                                                                                  \
+        }                                                                                      \
+    }                                                                                          \
+    else if ((is_sec_mask & new_pos_bitboard) == 0)                                            \
+    {                                                                                          \
+        const int32_t new_eval = evaluation - (forward_adv);                                   \
+                                                                                               \
+        score = (new_eval < score) ? new_eval : score;                                         \
+        beta = (new_eval < beta) ? new_eval : beta;                                            \
+        if (beta <= alpha)                                                                     \
+        {                                                                                      \
+            return score;                                                                      \
+        }                                                                                      \
     }
 
 #ifdef BRANCH_DEBUG
 
 #define BEGIN_BRANCH_TRACKING() \
-    static const int _branch_counter_base = __COUNTER__
+    static const int32_t _branch_counter_base = __COUNTER__
 
-#define BRANCH_ENTER_MAX(MSG)                                                         \
-    static const int _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
-    const int64_t cur_rec_count_##__LINE__ = rec_counter;                             \
-    cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                           \
-    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                 \
-    cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                          \
+#define BRANCH_ENTER_MAX(MSG)                                                             \
+    static const int32_t _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
+    const int64_t cur_rec_count_##__LINE__ = rec_counter;                                 \
+    cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                               \
+    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                     \
+    cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                              \
     cutoff_tracker[_branch_idx_##__LINE__].temp_score = alpha
 
-#define BRANCH_ENTER_MIN(MSG)                                                         \
-    static const int _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
-    const int64_t cur_rec_count_##__LINE__ = rec_counter;                             \
-    cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                           \
-    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                 \
-    cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                          \
+#define BRANCH_ENTER_MIN(MSG)                                                             \
+    static const int32_t _branch_idx_##__LINE__ = __COUNTER__ - _branch_counter_base - 1; \
+    const int64_t cur_rec_count_##__LINE__ = rec_counter;                                 \
+    cutoff_tracker[_branch_idx_##__LINE__].total_entries++;                               \
+    cutoff_tracker[_branch_idx_##__LINE__].msg = MSG;                                     \
+    cutoff_tracker[_branch_idx_##__LINE__].cutoff_entries++;                              \
     cutoff_tracker[_branch_idx_##__LINE__].temp_score = beta
 
 #define BRANCH_EXIT_MAX()                                                                            \
@@ -2077,7 +1628,7 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
     cutoff_tracker[_branch_idx_##__LINE__].improved_score++
 
 #define END_BRANCH_TRACKING() \
-    const int _total_branch_count = (__COUNTER__ - _branch_counter_base - 1)
+    const int32_t _total_branch_count = (__COUNTER__ - _branch_counter_base - 1)
 
 #else
 
@@ -2090,62 +1641,97 @@ static possible_moves_t possible_moves(const field_t *__restrict__ position, con
 
 #endif
 
-#define TRACK_ENTRY_MAX() \
+#define TRACK_ENTRY_MAX()        \
+    best_section = MOVE_SECTION; \
     goto track_max;
 
-#define TRACK_ENTRY_MIN() \
+#define TRACK_ENTRY_MIN()        \
+    best_section = MOVE_SECTION; \
     goto track_min;
+
+// Make the code looks prettier
+#define MOVE_SECTION_BEGIN(n)           \
+    {                                   \
+        enum                            \
+        {                               \
+            MOVE_SECTION = (n)          \
+        };                              \
+        if (loaded_best_section != (n)) \
+        {                               \
+            __movesect_##n:
+
+#define MOVE_SECTION_END(jump) \
+    if (has_jumped)            \
+        goto jump;             \
+    }                          \
+    }
 
 #define GET_CACHE_COUNT() 0
 
 BEGIN_BRANCH_TRACKING();
 
-static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, const field_t *__restrict__ position);
+// Call signatures in case those would change any time
+#define MINIMAX_FUNC(func)                                                                                                    \
+    func(int32_t depth, int32_t alpha, int32_t beta, const int32_t evaluation,                                                \
+         const uint64_t is_fir_mask, const uint64_t is_sec_mask, const uint64_t is_link_mask, const uint64_t is_boosted_mask, \
+         const extra_args_t args)
 
-static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, const field_t *__restrict__ position)
+#define MINIMAX_CALL(func, depth, alpha, beta, eval, fm, sm, lm, bm, as) \
+    func(depth, alpha, beta, eval, fm, sm, lm, bm, as)
+
+#define BRANCHED_MINIMAX_CALL(cond, func_true, func_false, depth, alpha, beta, eval, fm, sm, lm, bm, as) \
+    ((cond) ? func_true : func_false)(depth, alpha, beta, eval, fm, sm, lm, bm, as)
+
+#define MINIMAX_UNPACK()
+
+// Way faster path for the last iteration
+
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_max);
+
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_min_term)
 {
 #ifdef BRANCH_DEBUG
     ++rec_counter;
 #endif
-    RNAB_ASSUME(depth > 0);
+    MINIMAX_UNPACK();
 
-    const uint64_t firmask = position->is_fir_mask, secmask = position->is_sec_mask;
-    const uint64_t fir_link_mask = position->is_link_mask & firmask;
-    const uint64_t fir_virus_mask = firmask ^ fir_link_mask;
-    const uint64_t sec_link_mask = position->is_link_mask ^ fir_link_mask;
+    RNAB_ASSUME(depth == 1);
+    RNAB_ASSUME(args.fields.fir_link <= 3);
+    RNAB_ASSUME(args.fields.fir_virus <= 3);
+    RNAB_ASSUME(args.fields.sec_link <= 3);
+    RNAB_ASSUME(args.fields.sec_virus <= 3);
 
-    const uint64_t cur_boosted_mask = position->is_boosted_mask & firmask;
-    const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_sec & 1) << (position->firewall_sec >> 1);
-    const uint64_t free_mask = ~(firmask | secmask | enemy_firewall_mask);
-    const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
-    const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+    const uint64_t sec_virus_mask = is_sec_mask ^ sec_link_mask;
 
-    int score = MIN;
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_sec_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_fir & 1) << (args.fields.firewall_fir >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
+    const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
+    const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
+    uint64_t unboosted_cards_mask;
 
-    RNAB_ASSUME(position->fir_link <= 3);
-    RNAB_ASSUME(position->fir_virus <= 3);
-    RNAB_ASSUME(position->sec_link <= 3);
-    RNAB_ASSUME(position->sec_virus <= 3);
+    int32_t score = MAX;
 
-    if (position->fir_link == 3) // fast path if we are about to win
+    if (args.fields.sec_link == 3) // fast path if we are about to win
     {
         // there is either a link at an exit square or a boosted link which can reach it
-        if ((fir_link_mask | (((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 24ULL)
-            return (4096 * depth);
-
+        if ((sec_link_mask | (((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 1729382256910270464ULL)
+            return -24576 - depth;
         if (links_masked_out)
         {
             // check if any of the cards can simply reach unprotected enemy link in one move
 #ifdef __AVX2__
             __m256i tgt = _mm256_set1_epi64x(links_masked_out);
 
-            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(firmask));
+            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(is_sec_mask));
 
             if (!_mm256_testz_si256(shuffled, shuffled))
 #else
-            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & firmask)
+            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & is_sec_mask)
 #endif
-                return (4096 * depth);
+                return -24576 - depth;
 
             // now let's check if we can reach any of the unprotected links with a boosted card if there is one
             if (cur_boosted_mask)
@@ -2153,14 +1739,14 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
                 // it looks like SIMD check is almost 3 times faster than the scalar one
 #ifdef __AVX2__
                 /*
-                links_masked_out & CAN_MOVE_BACKWARD_LEFT  & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
-                links_masked_out & CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
                 links_masked_out & -1                      & (cur_boosted_mask << 16) & (0                | (free_mask << 8))
                 links_masked_out & CAN_MOVE_DOUBLE_RIGHT   & (cur_boosted_mask << 2)  & ((free_mask << 1) | 0               )
 
 
-                links_masked_out & CAN_MOVE_FORWARD_LEFT   & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
-                links_masked_out & CAN_MOVE_FORWARD_RIGHT  & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
                 links_masked_out & CAN_MOVE_DOUBLE_LEFT    & (cur_boosted_mask >> 2)  & ((free_mask >> 1) | 0               )
                 links_masked_out & -1                      & (cur_boosted_mask >> 16) & (0                | (free_mask >> 8))
                 */
@@ -2171,64 +1757,1282 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
                 __m256i cm = _mm256_set1_epi64x(cur_boosted_mask);
                 __m256i shift_comb = _mm256_blend_epi32(_mm256_slli_epi64(fm, 1), _mm256_srli_epi64(fm, 1), 0b00110011);
 
-                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_BACKWARD_LEFT, CAN_MOVE_BACKWARD_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_FORWARD_LEFT, CAN_MOVE_FORWARD_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
+                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
 #else
-                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                               // down and not blocked
-                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                               // up and not blocked
-                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |                        // right and not blocked
-                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                         // left and not blocked
-                                        (CAN_MOVE_BACKWARD_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
-                                        (CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
-                                        (CAN_MOVE_FORWARD_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |   // up left
-                                        (CAN_MOVE_FORWARD_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8)))))  // up right
+                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                      // down and not blocked
+                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                      // up and not blocked
+                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |               // right and not blocked
+                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                // left and not blocked
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |  // up left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))) // up right
 #endif
-                    return (4096 * depth);
+                    return -24576 - depth;
+            }
+        }
+    }
+
+    if ((sec_link_mask & 1152921504606846976ULL) != 0 || (sec_link_mask & 576460752303423488ULL) != 0)
+    {
+        const int32_t new_eval = evaluation - (128 << args.fields.sec_link) + 7;
+
+        score = (new_eval < score) ? new_eval : score;
+        beta = (new_eval < beta) ? new_eval : beta;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (__builtin_expect((((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL) != 0, 0))
+    {
+        const int32_t new_eval = evaluation - (128 << args.fields.sec_link) + (__builtin_ctzll(cur_boosted_mask) >> 3);
+
+        score = (new_eval < score) ? new_eval : score;
+        beta = (new_eval < beta) ? new_eval : beta;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (cur_boosted_mask && (((cur_boosted_mask & (free_mask << 8) & (links_masked_out << 16)) != 0) ||
+                             (cur_boosted_mask & (links_masked_out << 8)) != 0 ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0) ||
+                             (cur_boosted_mask & (links_masked_out >> 8)) != 0 ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0) ||
+                             ((cur_boosted_mask & (free_mask >> 8) & (links_masked_out >> 16)) != 0)))
+    {
+        const int32_t new_eval = evaluation - (__builtin_clzll(cur_boosted_mask) >> 3) - (128 << args.fields.sec_link);
+
+        score = (new_eval < score) ? new_eval : score;
+        beta = (new_eval < beta) ? new_eval : beta;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if ((cur_boosted_mask == 0 && is_sec_mask) != 0 || (cur_boosted_mask != 0) || args.fields.firewall_sec || ((sec_link_mask | (sec_virus_mask & cur_boosted_mask)) & 16717361816799281127ULL) != 0)
+    {
+        score = (evaluation < score) ? evaluation : score;
+        beta = (evaluation < beta) ? evaluation : beta;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (cur_boosted_mask)
+    {
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_sec_mask);
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+    }
+
+    unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    if (args.fields.is_swap_available_sec && sec_link_mask && sec_virus_mask)
+    {
+        const int32_t new_eval = evaluation + 256;
+
+        score = (new_eval < score) ? new_eval : score;
+        beta = (new_eval < beta) ? new_eval : beta;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    return score;
+}
+
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_max_term)
+{
+#ifdef BRANCH_DEBUG
+    ++rec_counter;
+#endif
+    MINIMAX_UNPACK();
+
+    RNAB_ASSUME(depth == 1);
+    RNAB_ASSUME(args.fields.fir_link <= 3);
+    RNAB_ASSUME(args.fields.fir_virus <= 3);
+    RNAB_ASSUME(args.fields.sec_link <= 3);
+    RNAB_ASSUME(args.fields.sec_virus <= 3);
+
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t fir_virus_mask = is_fir_mask ^ fir_link_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_fir_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_sec & 1) << (args.fields.firewall_sec >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
+    const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
+    const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
+    uint64_t unboosted_cards_mask;
+
+    int32_t score = MIN;
+
+    if (args.fields.fir_link == 3) // fast path if we are about to win
+    {
+        // there is either a link at an exit square or a boosted link which can reach it
+        if ((fir_link_mask | (((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 24ULL)
+            return 24576 + depth;
+
+        if (links_masked_out)
+        {
+            // check if any of the cards can simply reach unprotected enemy link in one move
+#ifdef __AVX2__
+            __m256i tgt = _mm256_set1_epi64x(links_masked_out);
+
+            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(is_fir_mask));
+
+            if (!_mm256_testz_si256(shuffled, shuffled))
+#else
+            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & is_fir_mask)
+#endif
+                return 24576 + depth;
+
+            // now let's check if we can reach any of the unprotected links with a boosted card if there is one
+            if (cur_boosted_mask)
+            {
+                // it looks like SIMD check is almost 3 times faster than the scalar one
+#ifdef __AVX2__
+                /*
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
+                links_masked_out & -1                      & (cur_boosted_mask << 16) & (0                | (free_mask << 8))
+                links_masked_out & CAN_MOVE_DOUBLE_RIGHT   & (cur_boosted_mask << 2)  & ((free_mask << 1) | 0               )
+
+
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_DOUBLE_LEFT    & (cur_boosted_mask >> 2)  & ((free_mask >> 1) | 0               )
+                links_masked_out & -1                      & (cur_boosted_mask >> 16) & (0                | (free_mask >> 8))
+                */
+
+                const __m256i zero_mask = _mm256_setzero_si256();
+
+                __m256i fm = _mm256_set1_epi64x(free_mask);
+                __m256i cm = _mm256_set1_epi64x(cur_boosted_mask);
+                __m256i shift_comb = _mm256_blend_epi32(_mm256_slli_epi64(fm, 1), _mm256_srli_epi64(fm, 1), 0b00110011);
+
+                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
+#else
+                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                      // down and not blocked
+                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                      // up and not blocked
+                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |               // right and not blocked
+                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                // left and not blocked
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |  // up left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))) // up right
+#endif
+                    return 24576 + depth;
+            }
+        }
+    }
+
+    if ((fir_link_mask & 16ULL) || (fir_link_mask & 8ULL))
+    {
+        const int32_t new_eval = evaluation + (128 << args.fields.fir_link) - 7;
+
+        score = (new_eval > score) ? new_eval : score;
+        alpha = (new_eval > alpha) ? new_eval : alpha;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (__builtin_expect((((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL) != 0, 0))
+    {
+        const int32_t new_eval = evaluation + (128 << args.fields.fir_link) - (__builtin_clzll(cur_boosted_mask) >> 3);
+
+        score = (new_eval > score) ? new_eval : score;
+        alpha = (new_eval > alpha) ? new_eval : alpha;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (cur_boosted_mask && (((cur_boosted_mask & (free_mask << 8) & (links_masked_out << 16)) != 0) ||
+                             (cur_boosted_mask & (links_masked_out << 8)) != 0 ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0) ||
+                             (cur_boosted_mask & (links_masked_out >> 8)) != 0 ||
+                             ((cur_boosted_mask & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0) ||
+                             ((cur_boosted_mask & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0) ||
+                             ((cur_boosted_mask & (free_mask >> 8) & (links_masked_out >> 16)) != 0)))
+    {
+        const int32_t new_eval = evaluation + (__builtin_ctzll(cur_boosted_mask) >> 3) + (128 << args.fields.fir_link);
+
+        score = (new_eval > score) ? new_eval : score;
+        alpha = (new_eval > alpha) ? new_eval : alpha;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if ((cur_boosted_mask == 0 && is_fir_mask) != 0 || (cur_boosted_mask != 0) || args.fields.firewall_fir || ((fir_link_mask | (fir_virus_mask & cur_boosted_mask)) & 16717361816799281127ULL) != 0)
+    {
+        score = (evaluation > score) ? evaluation : score;
+        alpha = (evaluation > alpha) ? evaluation : alpha;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    if (cur_boosted_mask)
+    {
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_fir_mask);
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (legal_mask >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (legal_mask << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (legal_mask >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+    }
+
+    unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+
+    if (args.fields.is_swap_available_fir && fir_link_mask && fir_virus_mask)
+    {
+        const int32_t new_eval = evaluation - 256;
+
+        score = (new_eval > score) ? new_eval : score;
+        alpha = (new_eval > alpha) ? new_eval : alpha;
+
+        if (beta <= alpha)
+        {
+            return score;
+        }
+    }
+
+    return score;
+}
+
+#undef PERFORM_ITERATION_FIR
+#undef PERFORM_ITERATION_SEC
+
+#define PERFORM_ITERATION_FIR(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                                                               \
+    if (is_sec_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                                                       \
+        if (sec_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                               \
+        {                                                                                                                                                                                                                                                                                                                                   \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                  \
+            const int32_t new_eval = evaluation + cur_pos_bit + (128 << args.fields.fir_link);                                                                                                                                                                                                                                              \
+                                                                                                                                                                                                                                                                                                                                            \
+            BRANCH_ENTER_MAX("capture link");                                                                                                                                                                                                                                                                                               \
+            const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                     \
+                                                           ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask ^ new_pos_bitboard) : ((is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
+                                                           ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                              \
+                                                           (const extra_args_t){.raw = args.raw + 65536ULL});                                                                                                                                                                                                                               \
+            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                              \
+                                                                                                                                                                                                                                                                                                                                            \
+            score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                  \
+            alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                  \
+            if (beta <= alpha)                                                                                                                                                                                                                                                                                                              \
+            {                                                                                                                                                                                                                                                                                                                               \
+                TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                          \
+            }                                                                                                                                                                                                                                                                                                                               \
+        }                                                                                                                                                                                                                                                                                                                                   \
+        else if (args.fields.fir_virus < 3)                                                                                                                                                                                                                                                                                                 \
+        {                                                                                                                                                                                                                                                                                                                                   \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                  \
+            const int32_t new_eval = evaluation + cur_pos_bit - (64 << args.fields.fir_virus);                                                                                                                                                                                                                                              \
+                                                                                                                                                                                                                                                                                                                                            \
+            int32_t reschild;                                                                                                                                                                                                                                                                                                               \
+            if (is_boosted || current_card == ITERATION_CURRENT_IS_FIRST_LINK)                                                                                                                                                                                                                                                              \
+            {                                                                                                                                                                                                                                                                                                                               \
+                BRANCH_ENTER_MAX("capture virus boosted || link");                                                                                                                                                                                                                                                                          \
+                reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                               \
+                                                 ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                            \
+                                                 ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                        \
+                                                 (const extra_args_t){.raw = args.raw + 4294967296ULL});                                                                                                                                                                                                                                    \
+                BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                          \
+            }                                                                                                                                                                                                                                                                                                                               \
+            else                                                                                                                                                                                                                                                                                                                            \
+            {                                                                                                                                                                                                                                                                                                                               \
+                BRANCH_ENTER_MAX("capture virus not boosted");                                                                                                                                                                                                                                                                              \
+                if (depth > 1)                                                                                                                                                                                                                                                                                                              \
+                {                                                                                                                                                                                                                                                                                                                           \
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                                                            \
+                                            ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                             \
+                                            (const extra_args_t){.raw = args.raw + 4294967296ULL});                                                                                                                                                                                                                                         \
+                    if (reschild > alpha && beta > alpha + 1)                                                                                                                                                                                                                                                                               \
+                        reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                                                             \
+                                                ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                             \
+                                                ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                         \
+                                                (const extra_args_t){.raw = args.raw + 4294967296ULL});                                                                                                                                                                                                                                     \
+                }                                                                                                                                                                                                                                                                                                                           \
+                else                                                                                                                                                                                                                                                                                                                        \
+                    reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask ^ new_pos_bitboard,                                                                                                                                                            \
+                                            ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                             \
+                                            (const extra_args_t){.raw = args.raw + 4294967296ULL});                                                                                                                                                                                                                                         \
+                                                                                                                                                                                                                                                                                                                                            \
+                BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                          \
+            }                                                                                                                                                                                                                                                                                                                               \
+                                                                                                                                                                                                                                                                                                                                            \
+            score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                  \
+            alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                  \
+            if (beta <= alpha)                                                                                                                                                                                                                                                                                                              \
+            {                                                                                                                                                                                                                                                                                                                               \
+                TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                          \
+            }                                                                                                                                                                                                                                                                                                                               \
+        }                                                                                                                                                                                                                                                                                                                                   \
+    }                                                                                                                                                                                                                                                                                                                                       \
+    else if ((is_fir_mask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                                                         \
+    {                                                                                                                                                                                                                                                                                                                                       \
+        const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                      \
+        const int32_t new_eval = evaluation + (forward_adv);                                                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                                                            \
+        int32_t reschild;                                                                                                                                                                                                                                                                                                                   \
+        if (is_boosted)                                                                                                                                                                                                                                                                                                                     \
+        {                                                                                                                                                                                                                                                                                                                                   \
+            BRANCH_ENTER_MAX("move boosted");                                                                                                                                                                                                                                                                                               \
+            reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask,                                                                                                                                                      \
+                                             ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                \
+                                             ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                \
+                                             args);                                                                                                                                                                                                                                                                                         \
+            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                              \
+        }                                                                                                                                                                                                                                                                                                                                   \
+        else                                                                                                                                                                                                                                                                                                                                \
+        {                                                                                                                                                                                                                                                                                                                                   \
+            BRANCH_ENTER_MAX("move not boosted");                                                                                                                                                                                                                                                                                           \
+            if (depth > 1)                                                                                                                                                                                                                                                                                                                  \
+            {                                                                                                                                                                                                                                                                                                                               \
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask,                                                                                                                                                                                   \
+                                        ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                     \
+                                        ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                     \
+                                        args);                                                                                                                                                                                                                                                                                              \
+                if (reschild > alpha && beta > alpha + 1)                                                                                                                                                                                                                                                                                   \
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask,                                                                                                                                                                                    \
+                                            ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                 \
+                                            args);                                                                                                                                                                                                                                                                                          \
+            }                                                                                                                                                                                                                                                                                                                               \
+            else                                                                                                                                                                                                                                                                                                                            \
+                reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ (cur_pos_bitboard | new_pos_bitboard), is_sec_mask,                                                                                                                                                                                   \
+                                        ((current_card == ITERATION_CURRENT_IS_FIRST_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_FIRST_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                     \
+                                        ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                     \
+                                        args);                                                                                                                                                                                                                                                                                              \
+                                                                                                                                                                                                                                                                                                                                            \
+            BRANCH_EXIT_MAX();                                                                                                                                                                                                                                                                                                              \
+        }                                                                                                                                                                                                                                                                                                                                   \
+                                                                                                                                                                                                                                                                                                                                            \
+        score = (reschild > score) ? reschild : score;                                                                                                                                                                                                                                                                                      \
+        alpha = (reschild > alpha) ? reschild : alpha;                                                                                                                                                                                                                                                                                      \
+        if (beta <= alpha)                                                                                                                                                                                                                                                                                                                  \
+        {                                                                                                                                                                                                                                                                                                                                   \
+            TRACK_ENTRY_MAX();                                                                                                                                                                                                                                                                                                              \
+        }                                                                                                                                                                                                                                                                                                                                   \
+    }
+
+#define PERFORM_ITERATION_SEC(shift_func, shift_count, forward_adv, is_boosted, current_card)                                                                                                                                                                                                                                                 \
+    if (is_fir_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                       \
+    {                                                                                                                                                                                                                                                                                                                                         \
+        if (fir_link_mask & new_pos_bitboard)                                                                                                                                                                                                                                                                                                 \
+        {                                                                                                                                                                                                                                                                                                                                     \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                    \
+            const int32_t new_eval = evaluation - cur_pos_bit - (128 << args.fields.sec_link);                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                                                              \
+            BRANCH_ENTER_MIN("capture link");                                                                                                                                                                                                                                                                                                 \
+            const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                       \
+                                                           ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ cur_pos_bitboard) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask ^ new_pos_bitboard) : ((is_link_mask ^ new_pos_bitboard ^ unknown_mask) | (unknown_mask shift_func shift_count)))), \
+                                                           ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                \
+                                                           (const extra_args_t){.raw = args.raw + 16777216ULL});                                                                                                                                                                                                                              \
+            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                                                              \
+            score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                    \
+            beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                       \
+            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                \
+            {                                                                                                                                                                                                                                                                                                                                 \
+                TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                            \
+            }                                                                                                                                                                                                                                                                                                                                 \
+        }                                                                                                                                                                                                                                                                                                                                     \
+        else if (args.fields.sec_virus < 3)                                                                                                                                                                                                                                                                                                   \
+        {                                                                                                                                                                                                                                                                                                                                     \
+            const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                    \
+            const int32_t new_eval = evaluation - cur_pos_bit + (64 << args.fields.sec_virus);                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                                                              \
+            int32_t reschild;                                                                                                                                                                                                                                                                                                                 \
+            if (is_boosted || current_card == ITERATION_CURRENT_IS_SECOND_LINK)                                                                                                                                                                                                                                                               \
+            {                                                                                                                                                                                                                                                                                                                                 \
+                BRANCH_ENTER_MIN("capture virus boosted || link");                                                                                                                                                                                                                                                                            \
+                reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                 \
+                                                 ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                            \
+                                                 ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                          \
+                                                 (const extra_args_t){.raw = args.raw + 1099511627776ULL});                                                                                                                                                                                                                                   \
+                BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                            \
+            }                                                                                                                                                                                                                                                                                                                                 \
+            else                                                                                                                                                                                                                                                                                                                              \
+            {                                                                                                                                                                                                                                                                                                                                 \
+                BRANCH_ENTER_MIN("capture virus not boosted");                                                                                                                                                                                                                                                                                \
+                if (depth > 1)                                                                                                                                                                                                                                                                                                                \
+                {                                                                                                                                                                                                                                                                                                                             \
+                    reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, new_eval, is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                \
+                                            ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                               \
+                                            (const extra_args_t){.raw = args.raw + 1099511627776ULL});                                                                                                                                                                                                                                        \
+                    if (reschild < beta && alpha < beta - 1)                                                                                                                                                                                                                                                                                  \
+                        reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, new_eval, is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                               \
+                                                ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                             \
+                                                ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                           \
+                                                (const extra_args_t){.raw = args.raw + 1099511627776ULL});                                                                                                                                                                                                                                    \
+                }                                                                                                                                                                                                                                                                                                                             \
+                else                                                                                                                                                                                                                                                                                                                          \
+                    reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask ^ new_pos_bitboard, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                              \
+                                            ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? ((is_boosted_mask ^ cur_pos_bitboard) | new_pos_bitboard) : (is_boosted_mask & ~new_pos_bitboard)),                                                                                                                                                                               \
+                                            (const extra_args_t){.raw = args.raw + 1099511627776ULL});                                                                                                                                                                                                                                        \
+                                                                                                                                                                                                                                                                                                                                              \
+                BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                            \
+            }                                                                                                                                                                                                                                                                                                                                 \
+                                                                                                                                                                                                                                                                                                                                              \
+            score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                    \
+            beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                       \
+            if (beta <= alpha)                                                                                                                                                                                                                                                                                                                \
+            {                                                                                                                                                                                                                                                                                                                                 \
+                TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                            \
+            }                                                                                                                                                                                                                                                                                                                                 \
+        }                                                                                                                                                                                                                                                                                                                                     \
+    }                                                                                                                                                                                                                                                                                                                                         \
+    else if ((is_sec_mask & new_pos_bitboard) == 0)                                                                                                                                                                                                                                                                                           \
+    {                                                                                                                                                                                                                                                                                                                                         \
+        const uint64_t unknown_mask = is_link_mask & cur_pos_bitboard;                                                                                                                                                                                                                                                                        \
+        const int32_t new_eval = evaluation - (forward_adv);                                                                                                                                                                                                                                                                                  \
+                                                                                                                                                                                                                                                                                                                                              \
+        int32_t reschild;                                                                                                                                                                                                                                                                                                                     \
+        if (is_boosted)                                                                                                                                                                                                                                                                                                                       \
+        {                                                                                                                                                                                                                                                                                                                                     \
+            BRANCH_ENTER_MIN("move boosted");                                                                                                                                                                                                                                                                                                 \
+            reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                        \
+                                             ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                \
+                                             ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                  \
+                                             args);                                                                                                                                                                                                                                                                                           \
+            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                \
+        }                                                                                                                                                                                                                                                                                                                                     \
+        else                                                                                                                                                                                                                                                                                                                                  \
+        {                                                                                                                                                                                                                                                                                                                                     \
+            BRANCH_ENTER_MIN("move not boosted");                                                                                                                                                                                                                                                                                             \
+            if (depth > 1)                                                                                                                                                                                                                                                                                                                    \
+            {                                                                                                                                                                                                                                                                                                                                 \
+                reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, new_eval, is_fir_mask, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                       \
+                                        ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                     \
+                                        ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                       \
+                                        args);                                                                                                                                                                                                                                                                                                \
+                if (reschild < beta && alpha < beta - 1)                                                                                                                                                                                                                                                                                      \
+                    reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                      \
+                                            ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                 \
+                                            ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                   \
+                                            args);                                                                                                                                                                                                                                                                                            \
+            }                                                                                                                                                                                                                                                                                                                                 \
+            else                                                                                                                                                                                                                                                                                                                              \
+                reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask ^ (cur_pos_bitboard | new_pos_bitboard),                                                                                                                                                                                     \
+                                        ((current_card == ITERATION_CURRENT_IS_SECOND_LINK) ? (is_link_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : ((current_card == ITERATION_CURRENT_IS_SECOND_VIRUS) ? (is_link_mask) : ((is_link_mask ^ unknown_mask) | (unknown_mask shift_func shift_count)))),                                     \
+                                        ((is_boosted) ? (is_boosted_mask ^ (cur_pos_bitboard | new_pos_bitboard)) : (is_boosted_mask)),                                                                                                                                                                                                       \
+                                        args);                                                                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                                                              \
+            BRANCH_EXIT_MIN();                                                                                                                                                                                                                                                                                                                \
+        }                                                                                                                                                                                                                                                                                                                                     \
+                                                                                                                                                                                                                                                                                                                                              \
+        score = (reschild < score) ? reschild : score;                                                                                                                                                                                                                                                                                        \
+        beta = (reschild < beta) ? reschild : beta;                                                                                                                                                                                                                                                                                           \
+        if (beta <= alpha)                                                                                                                                                                                                                                                                                                                    \
+        {                                                                                                                                                                                                                                                                                                                                     \
+            TRACK_ENTRY_MIN();                                                                                                                                                                                                                                                                                                                \
+        }                                                                                                                                                                                                                                                                                                                                     \
+    }
+
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_min);
+
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_max)
+{
+    if (__builtin_expect(should_exit != 0, 0))
+        return 0;
+#ifdef BRANCH_DEBUG
+    ++rec_counter;
+#endif
+    MINIMAX_UNPACK();
+
+    RNAB_ASSUME(depth > 0);
+    RNAB_ASSUME(args.fields.fir_link <= 3);
+    RNAB_ASSUME(args.fields.fir_virus <= 3);
+    RNAB_ASSUME(args.fields.sec_link <= 3);
+    RNAB_ASSUME(args.fields.sec_virus <= 3);
+
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t fir_virus_mask = is_fir_mask ^ fir_link_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_fir_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_sec & 1) << (args.fields.firewall_sec >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
+    const uint64_t boosted_link = cur_boosted_mask & fir_link_mask;
+    const uint64_t links_masked_out = sec_link_mask & ~enemy_firewall_mask;
+    const tt_bucket_t *__restrict__ bucket;
+    uint64_t hash;
+    uint64_t unboosted_cards_mask;
+    int32_t alphabeg;
+    uint8_t loaded_best_section = 15u;
+    uint8_t best_section = 15u;
+    bool has_jumped = false;
+
+    int32_t score = MIN;
+
+    if (args.fields.fir_link == 3) // fast path if we are about to win
+    {
+        // there is either a link at an exit square or a boosted link which can reach it
+        if ((fir_link_mask | (((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 24ULL)
+            return 24576 + depth;
+
+        if (links_masked_out)
+        {
+            // check if any of the cards can simply reach unprotected enemy link in one move
+#ifdef __AVX2__
+            __m256i tgt = _mm256_set1_epi64x(links_masked_out);
+
+            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(is_fir_mask));
+
+            if (!_mm256_testz_si256(shuffled, shuffled))
+#else
+            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & is_fir_mask)
+#endif
+                return 24576 + depth;
+
+            // now let's check if we can reach any of the unprotected links with a boosted card if there is one
+            if (cur_boosted_mask)
+            {
+                // it looks like SIMD check is almost 3 times faster than the scalar one
+#ifdef __AVX2__
+                /*
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
+                links_masked_out & -1                      & (cur_boosted_mask << 16) & (0                | (free_mask << 8))
+                links_masked_out & CAN_MOVE_DOUBLE_RIGHT   & (cur_boosted_mask << 2)  & ((free_mask << 1) | 0               )
+
+
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_DOUBLE_LEFT    & (cur_boosted_mask >> 2)  & ((free_mask >> 1) | 0               )
+                links_masked_out & -1                      & (cur_boosted_mask >> 16) & (0                | (free_mask >> 8))
+                */
+
+                const __m256i zero_mask = _mm256_setzero_si256();
+
+                __m256i fm = _mm256_set1_epi64x(free_mask);
+                __m256i cm = _mm256_set1_epi64x(cur_boosted_mask);
+                __m256i shift_comb = _mm256_blend_epi32(_mm256_slli_epi64(fm, 1), _mm256_srli_epi64(fm, 1), 0b00110011);
+
+                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
+#else
+                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                      // down and not blocked
+                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                      // up and not blocked
+                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |               // right and not blocked
+                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                // left and not blocked
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |  // up left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))) // up right
+#endif
+                    return 24576 + depth;
             }
         }
     }
 
     --depth;
 
-    int alphabeg = alpha;
+    static const void *movesect_jmp_buf[] = {
+        &&__movesect_0, &&__movesect_1, &&__movesect_2, &&__movesect_3, &&__movesect_4,
+        &&__movesect_5, &&__movesect_6, &&__movesect_7};
 
     // check if the move is cached
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_fir[hash & (TABLE_SIZE - 1)];
-        tt_entry_t *__restrict__ entry = (bucket->depth_preferred.hash_entry == hash) ? &bucket->depth_preferred : ((bucket->scratch.hash_entry == hash) ? &bucket->scratch : NULL);
+        hash = rapidhashNano(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, args.raw, 0);
+        bucket = &tt_fir[hash & (TABLE_SIZE - 1)];
+        hash = (hash >> TABLE_SIZE_BITS) & ENTRY_HASH_MASK;
 
-        if (entry && entry->depth >= depth)
+        const uint64_t depth_preferred = bucket->depth_preferred;
+        const uint64_t scratch = bucket->scratch;
+
+        const uint64_t entry = ((depth_preferred & ENTRY_HASH_MASK) == hash) ? depth_preferred : (((scratch & ENTRY_HASH_MASK) == hash) ? scratch : 0ULL);
+
+        const uint32_t entry_flag = (entry >> (ENTRY_HASH_SIZE + 0)) & 3;
+        const uint32_t entry_depth = (entry >> (ENTRY_HASH_SIZE + 2)) & 31;
+        const uint32_t entry_best_section = (entry >> (ENTRY_HASH_SIZE + 2 + 5)) & 15;
+        const int32_t entry_eval = (int32_t)(int16_t)(entry >> 48);
+
+        if (entry_depth >= depth) // inherently wrong but it works
         {
-            if (entry->flag == TT_EXACT)
+            if (entry_flag == TT_EXACT)
             {
-                return entry->eval;
+                return entry_eval;
             }
-            else if (entry->flag == TT_LOWERBOUND)
+            else if (entry_flag == TT_LOWERBOUND)
             {
-                if (entry->eval >= beta)
-                    return entry->eval;
-                alpha = (entry->eval > alpha) ? entry->eval : alpha;
+                if (entry_eval >= beta)
+                    return entry_eval;
+                alpha = (entry_eval > alpha) ? entry_eval : alpha;
             }
-            else if (entry->flag == TT_UPPERBOUND)
+            else if (entry_flag == TT_UPPERBOUND)
             {
-                if (entry->eval <= alpha)
-                    return entry->eval;
-                beta = (entry->eval < beta) ? entry->eval : beta;
+                if (entry_eval <= alpha)
+                    return entry_eval;
+                beta = (entry_eval < beta) ? entry_eval : beta;
+            }
+        }
+
+        alphabeg = alpha;
+
+        if (entry)
+        {
+            loaded_best_section = entry_best_section;
+
+            if (loaded_best_section != 15u)
+            {
+                has_jumped = true;
+                goto *movesect_jmp_buf[loaded_best_section];
             }
         }
     }
 
-    if (__builtin_expect(fir_link_mask & 8ULL, 0))
-    {
-        const field_t temp_field = {position->is_fir_mask & ~8ULL, position->is_sec_mask, position->is_link_mask & ~8ULL, position->is_boosted_mask & ~8ULL,
-                                    position->forward_adv_fir - (uint8_t)7, position->forward_adv_sec,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+__maximize_begin:
+    has_jumped = false;
 
-        BRANCH_ENTER_MAX("deposit close");
-        int reschild = (depth != 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+#define MOVE_SECTION 15u
+    if (__builtin_expect((fir_link_mask & 8ULL) != 0, 0))
+    {
+        const int32_t new_eval = evaluation + (128 << args.fields.fir_link) - 7;
+
+        RNAB_ASSUME((is_fir_mask & 8ULL) && (is_link_mask & 8ULL));
+
+        BRANCH_ENTER_MAX("deposit close 1");
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval,
+                                                       is_fir_mask & ~8ULL, is_sec_mask, is_link_mask & ~8ULL, is_boosted_mask & ~8ULL,
+                                                       (const extra_args_t){.raw = args.raw + 65536ULL});
         BRANCH_EXIT_MAX();
 
         score = (reschild > score) ? reschild : score;
@@ -2240,16 +3044,16 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         }
     }
 
-    if (__builtin_expect(fir_link_mask & 16ULL, 0))
+    if (__builtin_expect((fir_link_mask & 16ULL) != 0, 0))
     {
-        const field_t temp_field = {position->is_fir_mask & ~16ULL, position->is_sec_mask, position->is_link_mask & ~16ULL, position->is_boosted_mask & ~16ULL,
-                                    position->forward_adv_fir - (uint8_t)7, position->forward_adv_sec,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+        const int32_t new_eval = evaluation + (128 << args.fields.fir_link) - 7;
 
-        BRANCH_ENTER_MAX("deposit close");
-        int reschild = (depth != 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+        RNAB_ASSUME((is_fir_mask & 16ULL) && (is_link_mask & 16ULL));
+
+        BRANCH_ENTER_MAX("deposit close 2");
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval,
+                                                       is_fir_mask & ~16ULL, is_sec_mask, is_link_mask & ~16ULL, is_boosted_mask & ~16ULL,
+                                                       (const extra_args_t){.raw = args.raw + 65536ULL});
         BRANCH_EXIT_MAX();
 
         score = (reschild > score) ? reschild : score;
@@ -2261,16 +3065,15 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         }
     }
 
-    if (__builtin_expect(((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL, 0))
+    if (__builtin_expect((((boosted_link >> 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 24ULL) != 0, 0))
     {
-        const field_t temp_field = {position->is_fir_mask & ~cur_boosted_mask, position->is_sec_mask, position->is_link_mask & ~cur_boosted_mask, position->is_boosted_mask & ~cur_boosted_mask,
-                                    position->forward_adv_fir - (uint8_t)(__builtin_clzll(cur_boosted_mask) >> 3), position->forward_adv_sec,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link + 1, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+        const int32_t new_eval = evaluation + (128 << args.fields.fir_link) - (__builtin_clzll(cur_boosted_mask) >> 3);
+
+        RNAB_ASSUME((is_fir_mask & cur_boosted_mask) && (is_link_mask & cur_boosted_mask) && (is_boosted_mask & cur_boosted_mask));
 
         BRANCH_ENTER_MAX("deposit far");
-        int reschild = (depth != 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask ^ cur_boosted_mask, is_sec_mask, is_link_mask ^ cur_boosted_mask, is_boosted_mask ^ cur_boosted_mask,
+                                                       (const extra_args_t){.raw = args.raw + 65536ULL});
         BRANCH_EXIT_MAX();
 
         score = (reschild > score) ? reschild : score;
@@ -2282,6 +3085,122 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         }
     }
 
+    if (cur_boosted_mask)
+    {
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((is_sec_mask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
+        }
+    }
+#undef MOVE_SECTION
+
+    MOVE_SECTION_BEGIN(0);
     if (cur_boosted_mask == 0)
     {
         uint64_t temp = fir_virus_mask;
@@ -2290,14 +3209,8 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t pos = extract_lsb(temp); // back -> front
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MAX("boost virus");
-            int reschild = (depth != 0) ? minimax_min(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+            const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_min, minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             BRANCH_EXIT_MAX();
 
             score = (reschild > score) ? reschild : score;
@@ -2314,122 +3227,14 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     else
     {
         const uint64_t cur_pos_bitboard = cur_boosted_mask;
-
-        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-            RNAB_ASSUME((secmask & new_pos_bitboard) && (sec_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
-        }
-
-        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~firmask);
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_fir_mask);
 
         if (((cur_pos_bitboard & (free_mask << 8) & (legal_mask << 16)) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 16, 2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2438,25 +3243,25 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 8, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 7, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 9, 1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2465,7 +3270,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2474,7 +3279,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2483,7 +3288,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 2, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2492,7 +3297,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(>>, 1, 0, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2501,25 +3306,25 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 8, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 9, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 7, -1, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
@@ -2528,155 +3333,14 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
 
-            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & firmask) == 0);
+            RNAB_ASSUME((sec_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_fir_mask) == 0);
 
             PERFORM_ITERATION_FIR(<<, 16, -2, true, ITERATION_CURRENT_IS_FIRST_UNKNOWN)
         }
     }
+    MOVE_SECTION_END(__maximize_begin);
 
-    uint64_t unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
-        const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
-
-        if (cur_pos_bitboard & (legal_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-        }
-
-        if (cur_pos_bitboard & (legal_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
-        }
-
-        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
-    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
-        const uint64_t legal_mask = (secmask & (~enemy_firewall_mask));
-
-        if (cur_pos_bitboard & (legal_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & (legal_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME(secmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
-    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
-
-        if (cur_pos_bitboard & (free_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        if (cur_pos_bitboard & (free_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
-        }
-
-        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
+    MOVE_SECTION_BEGIN(1);
     unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
 
     RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
@@ -2684,12 +3348,165 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     while (unboosted_cards_mask)
     {
         const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__maximize_begin);
+
+    MOVE_SECTION_BEGIN(2);
+    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const uint64_t legal_mask = (is_sec_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_sec_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__maximize_begin);
+
+    MOVE_SECTION_BEGIN(3);
+    unboosted_cards_mask = fir_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
 
         if (cur_pos_bitboard & (free_mask << 8))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_LINK)
+        }
+
+        clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__maximize_begin);
+
+    MOVE_SECTION_BEGIN(4);
+    unboosted_cards_mask = fir_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = extract_lsb(unboosted_cards_mask);
+        const int cur_pos_bit = __builtin_ctzll(cur_pos_bitboard) >> 3;
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_FIR(>>, 8, 1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
         }
@@ -2698,7 +3515,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_FIR(<<, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
         }
@@ -2707,7 +3524,7 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_FIR(>>, 1, 0, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
         }
@@ -2716,41 +3533,67 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_FIR(<<, 8, -1, false, ITERATION_CURRENT_IS_FIRST_VIRUS)
         }
 
         clear_lowest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
     }
+    MOVE_SECTION_END(__maximize_begin);
 
-    if (position->firewall_fir == 0)
+    MOVE_SECTION_BEGIN(5);
+    if (args.fields.firewall_fir)
+    {
+        BRANCH_ENTER_MAX("un-firewall");
+        int32_t reschild;
+        if (depth > 1)
+        {
+            reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                    (const extra_args_t){.raw = (args.raw & 18446744073709551360ULL)});
+            if (reschild > alpha && beta > alpha + 1)
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = (args.raw & 18446744073709551360ULL)});
+        }
+        else
+            reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                    (const extra_args_t){.raw = (args.raw & 18446744073709551360ULL)});
+        BRANCH_EXIT_MAX();
+
+        best_section = (reschild > score) ? MOVE_SECTION : best_section;
+        score = (reschild > score) ? reschild : score;
+        alpha = (reschild > alpha) ? reschild : alpha;
+
+        if (beta <= alpha)
+        {
+            TRACK_ENTRY_MAX();
+        }
+    }
+    else
     {
         uint64_t temp = fir_link_mask & 16717361816799281127ULL;
 
         while (temp)
         {
-            const int bit_pos = get_ctz(temp);
+            const int bit_pos = __builtin_ctzll(temp);
             const uint64_t pos = (1ULL << bit_pos); // front -> back
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        (uint8_t)((bit_pos << 1) | 1), position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MAX("firewall link");
-            int reschild;
-            if (depth > 0)
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
                 if (reschild > alpha && beta > alpha + 1)
-                    reschild = minimax_min(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
             BRANCH_EXIT_MAX();
 
+            best_section = (reschild > score) ? MOVE_SECTION : best_section;
             score = (reschild > score) ? reschild : score;
             alpha = (reschild > alpha) ? reschild : alpha;
 
@@ -2766,24 +3609,24 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 
         if (temp)
         {
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        (uint8_t)((get_ctz(temp) << 1) | 1), position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
+            const int bit_pos = __builtin_ctzll(temp);
 
             BRANCH_ENTER_MAX("firewall boosted virus");
-            int reschild;
-            if (depth > 0)
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
                 if (reschild > alpha && beta > alpha + 1)
-                    reschild = minimax_min(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw | 1 | (bit_pos << 1)});
             BRANCH_EXIT_MAX();
 
+            best_section = (reschild > score) ? MOVE_SECTION : best_section;
             score = (reschild > score) ? reschild : score;
             alpha = (reschild > alpha) ? reschild : alpha;
 
@@ -2793,36 +3636,10 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
             }
         }
     }
-    else
-    {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec,
-                                    0, position->firewall_sec,
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+    MOVE_SECTION_END(__maximize_begin);
 
-        BRANCH_ENTER_MAX("un-firewall");
-        int reschild;
-        if (depth > 0)
-        {
-            reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
-            if (reschild > alpha && beta > alpha + 1)
-                reschild = minimax_min(depth, alpha, beta, &temp_field);
-        }
-        else
-            reschild = field_evaluate(&temp_field);
-        BRANCH_EXIT_MAX();
-
-        score = (reschild > score) ? reschild : score;
-        alpha = (reschild > alpha) ? reschild : alpha;
-
-        if (beta <= alpha)
-        {
-            TRACK_ENTRY_MAX();
-        }
-    }
-
-    if (position->is_swap_available_fir)
+    MOVE_SECTION_BEGIN(6);
+    if (args.fields.is_swap_available_fir)
     {
         uint64_t link_mask = fir_link_mask;
 
@@ -2836,24 +3653,24 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
             {
                 const uint64_t virus_pos = extract_lsb(virus_mask); // front -> back
 
-                const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask ^ (link_pos | virus_pos), position->is_boosted_mask,
-                                            position->forward_adv_fir, position->forward_adv_sec,
-                                            position->firewall_fir, position->firewall_sec,
-                                            position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                            0, position->is_swap_available_sec};
+                const int32_t new_eval = evaluation - 256;
 
                 BRANCH_ENTER_MAX("swap");
-                int reschild;
-                if (depth > 0)
+                int32_t reschild;
+                if (depth > 1)
                 {
-                    reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw ^ 281474976710656ULL});
                     if (reschild > alpha && beta > alpha + 1)
-                        reschild = minimax_min(depth, alpha, beta, &temp_field);
+                        reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                                (const extra_args_t){.raw = args.raw ^ 281474976710656ULL});
                 }
                 else
-                    reschild = field_evaluate(&temp_field);
+                    reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw ^ 281474976710656ULL});
                 BRANCH_EXIT_MAX();
 
+                best_section = (reschild > score) ? MOVE_SECTION : best_section;
                 score = (reschild > score) ? reschild : score;
                 alpha = (reschild > alpha) ? reschild : alpha;
 
@@ -2868,7 +3685,9 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
             clear_lowest_set_bit(link_mask, link_pos);
         }
     }
+    MOVE_SECTION_END(__maximize_begin);
 
+    MOVE_SECTION_BEGIN(7);
     if (cur_boosted_mask == 0)
     {
         uint64_t temp = fir_link_mask;
@@ -2877,22 +3696,16 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
         {
             const uint64_t pos = extract_lsb(temp); // back -> front
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MAX("boost link");
-            int reschild;
-            if (depth > 0)
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
                 if (reschild > alpha && beta > alpha + 1)
-                    reschild = minimax_min(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             BRANCH_EXIT_MAX();
 
             score = (reschild > score) ? reschild : score;
@@ -2908,22 +3721,16 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
     }
     else
     {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask & temp_field.is_sec_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
-
         BRANCH_ENTER_MAX("un-boost");
-        int reschild;
-        if (depth > 0)
+        int32_t reschild;
+        if (depth > 1)
         {
-            reschild = minimax_min(depth, alpha, alpha + 1, &temp_field);
+            reschild = MINIMAX_CALL(minimax_min, depth, alpha, alpha + 1, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
             if (reschild > alpha && beta > alpha + 1)
-                reschild = minimax_min(depth, alpha, beta, &temp_field);
+                reschild = MINIMAX_CALL(minimax_min, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
         }
         else
-            reschild = field_evaluate(&temp_field);
+            reschild = MINIMAX_CALL(minimax_min_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
         BRANCH_EXIT_MAX();
 
         score = (reschild > score) ? reschild : score;
@@ -2934,11 +3741,11 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
             TRACK_ENTRY_MAX();
         }
     }
+    MOVE_SECTION_END(__maximize_begin);
+
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_fir[hash & (TABLE_SIZE - 1)];
-        *(tt_entry_t *__restrict__)((depth >= bucket->depth_preferred.depth) ? &bucket->depth_preferred : &bucket->scratch) = (tt_entry_t){hash, score, (uint8_t)depth, (uint8_t)((score <= alphabeg) ? TT_UPPERBOUND : TT_EXACT)};
+        *(uint64_t *__restrict__)((depth >= ((bucket->depth_preferred >> (ENTRY_HASH_SIZE + 2)) & 31)) ? &bucket->depth_preferred : &bucket->scratch) = (hash) | ((uint64_t)((score <= alphabeg) ? TT_UPPERBOUND : TT_EXACT) << (ENTRY_HASH_SIZE)) | ((uint64_t)((uint32_t)depth) << (ENTRY_HASH_SIZE + 2)) | ((uint64_t)best_section << (ENTRY_HASH_SIZE + 2 + 5)) | ((uint64_t)((uint16_t)(int16_t)score) << 48);
     }
 
     return score;
@@ -2946,57 +3753,63 @@ static __attribute__((hot)) int minimax_max(int depth, int alpha, int beta, cons
 track_max:
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_fir[hash & (TABLE_SIZE - 1)];
-        *(tt_entry_t *__restrict__)((depth >= bucket->depth_preferred.depth) ? &bucket->depth_preferred : &bucket->scratch) = (tt_entry_t){hash, score, (uint8_t)depth, TT_LOWERBOUND};
+        *(uint64_t *__restrict__)((depth >= ((bucket->depth_preferred >> (ENTRY_HASH_SIZE + 2)) & 31)) ? &bucket->depth_preferred : &bucket->scratch) = (hash) | ((uint64_t)TT_LOWERBOUND << (ENTRY_HASH_SIZE)) | ((uint64_t)((uint32_t)depth) << (ENTRY_HASH_SIZE + 2)) | ((uint64_t)best_section << (ENTRY_HASH_SIZE + 2 + 5)) | ((uint64_t)((uint16_t)(int16_t)score) << 48);
     }
 
     return score;
 }
 
-static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, const field_t *__restrict__ position)
+__attribute__((aligned(64))) __attribute__((hot)) static int32_t MINIMAX_FUNC(minimax_min)
 {
+    // Checking flag in only of those is sufficient
 #ifdef BRANCH_DEBUG
     ++rec_counter;
 #endif
+    MINIMAX_UNPACK();
+
     RNAB_ASSUME(depth > 0);
+    RNAB_ASSUME(args.fields.fir_link <= 3);
+    RNAB_ASSUME(args.fields.fir_virus <= 3);
+    RNAB_ASSUME(args.fields.sec_link <= 3);
+    RNAB_ASSUME(args.fields.sec_virus <= 3);
 
-    const uint64_t firmask = position->is_fir_mask, secmask = position->is_sec_mask;
-    const uint64_t fir_link_mask = position->is_link_mask & firmask;
-    const uint64_t sec_link_mask = position->is_link_mask ^ fir_link_mask;
-    const uint64_t sec_virus_mask = secmask ^ sec_link_mask;
+    const uint64_t fir_link_mask = is_link_mask & is_fir_mask;
+    const uint64_t sec_link_mask = is_link_mask ^ fir_link_mask;
+    const uint64_t sec_virus_mask = is_sec_mask ^ sec_link_mask;
 
-    const uint64_t cur_boosted_mask = position->is_boosted_mask & secmask;
-    const uint64_t enemy_firewall_mask = (uint64_t)(position->firewall_fir & 1) << (position->firewall_fir >> 1);
-    const uint64_t free_mask = ~(firmask | secmask | enemy_firewall_mask);
+    const uint64_t cur_boosted_mask = is_boosted_mask & is_sec_mask;
+    const uint64_t enemy_firewall_mask = (uint64_t)(args.fields.firewall_fir & 1) << (args.fields.firewall_fir >> 1);
+    const uint64_t free_mask = ~(is_fir_mask | is_sec_mask | enemy_firewall_mask);
     const uint64_t boosted_link = cur_boosted_mask & sec_link_mask;
     const uint64_t links_masked_out = fir_link_mask & ~enemy_firewall_mask;
+    const tt_bucket_t *__restrict__ bucket;
+    uint64_t hash;
+    uint64_t unboosted_cards_mask;
+    int32_t betabeg;
+    uint8_t loaded_best_section = 15u;
+    uint8_t best_section = 15u;
+    bool has_jumped = false;
 
-    int score = MAX;
+    int32_t score = MAX;
 
-    RNAB_ASSUME(position->fir_link <= 3);
-    RNAB_ASSUME(position->fir_virus <= 3);
-    RNAB_ASSUME(position->sec_link <= 3);
-    RNAB_ASSUME(position->sec_virus <= 3);
-
-    if (position->sec_link == 3) // fast path if we are about to win
+    if (args.fields.sec_link == 3) // fast path if we are about to win
     {
         // there is either a link at an exit square or a boosted link which can reach it
         if ((sec_link_mask | (((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask)) & 1729382256910270464ULL)
-            return (-4096 * depth);
+            return -24576 - depth;
         if (links_masked_out)
         {
             // check if any of the cards can simply reach unprotected enemy link in one move
 #ifdef __AVX2__
             __m256i tgt = _mm256_set1_epi64x(links_masked_out);
 
-            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(secmask));
+            __m256i shuffled = _mm256_and_si256(_mm256_blend_epi32(_mm256_or_si256(_mm256_srli_si256(tgt, 9), _mm256_srli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, CAN_MOVE_RIGHT, 0, 0)), 1)), _mm256_or_si256(_mm256_slli_si256(tgt, 9), _mm256_slli_epi64(_mm256_and_si256(tgt, _mm256_setr_epi64x(0, 0, CAN_MOVE_LEFT, 0)), 1)), 0b11110000), _mm256_set1_epi64x(is_sec_mask));
 
             if (!_mm256_testz_si256(shuffled, shuffled))
 #else
-            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & secmask)
+            if (((links_masked_out >> 8) | (links_masked_out << 8) | ((links_masked_out & CAN_MOVE_RIGHT) >> 1) | ((links_masked_out & CAN_MOVE_LEFT) << 1)) & is_sec_mask)
 #endif
-                return (-4096 * depth);
+                return -24576 - depth;
 
             // now let's check if we can reach any of the unprotected links with a boosted card if there is one
             if (cur_boosted_mask)
@@ -3004,14 +3817,14 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
                 // it looks like SIMD check is almost 3 times faster than the scalar one
 #ifdef __AVX2__
                 /*
-                links_masked_out & CAN_MOVE_BACKWARD_LEFT  & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
-                links_masked_out & CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask << 7)  & ((free_mask >> 1) | (free_mask << 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask << 9)  & ((free_mask << 1) | (free_mask << 8))
                 links_masked_out & -1                      & (cur_boosted_mask << 16) & (0                | (free_mask << 8))
                 links_masked_out & CAN_MOVE_DOUBLE_RIGHT   & (cur_boosted_mask << 2)  & ((free_mask << 1) | 0               )
 
 
-                links_masked_out & CAN_MOVE_FORWARD_LEFT   & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
-                links_masked_out & CAN_MOVE_FORWARD_RIGHT  & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_LEFT           & (cur_boosted_mask >> 9)  & ((free_mask >> 1) | (free_mask >> 8))
+                links_masked_out & CAN_MOVE_RIGHT          & (cur_boosted_mask >> 7)  & ((free_mask << 1) | (free_mask >> 8))
                 links_masked_out & CAN_MOVE_DOUBLE_LEFT    & (cur_boosted_mask >> 2)  & ((free_mask >> 1) | 0               )
                 links_masked_out & -1                      & (cur_boosted_mask >> 16) & (0                | (free_mask >> 8))
                 */
@@ -3022,64 +3835,92 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
                 __m256i cm = _mm256_set1_epi64x(cur_boosted_mask);
                 __m256i shift_comb = _mm256_blend_epi32(_mm256_slli_epi64(fm, 1), _mm256_srli_epi64(fm, 1), 0b00110011);
 
-                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_BACKWARD_LEFT, CAN_MOVE_BACKWARD_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_FORWARD_LEFT, CAN_MOVE_FORWARD_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
+                if (!_mm256_testz_si256(_mm256_or_si256(_mm256_and_si256(_mm256_and_si256(_mm256_sllv_epi64(cm, _mm256_setr_epi64x(7, 9, 16, 2)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(-1, 0, 1, 2, 3, 4, 5, 6, -1, 8, 9, 10, 11, 12, 13, 14, -1, 16, 17, 18, 19, 20, 21, 22, -1, -1, -1, -1, -1, -1, -1, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b11001111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, -1, CAN_MOVE_DOUBLE_RIGHT)), _mm256_and_si256(_mm256_and_si256(_mm256_srlv_epi64(cm, _mm256_setr_epi64x(9, 7, 2, 16)), _mm256_or_si256(_mm256_shuffle_epi8(fm, _mm256_setr_epi8(1, 2, 3, 4, 5, 6, 7, -1, 9, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, 26, 27, 28, 29, 30, 31, -1)), _mm256_blend_epi32(zero_mask, shift_comb, 0b00111111))), _mm256_setr_epi64x(CAN_MOVE_LEFT, CAN_MOVE_RIGHT, CAN_MOVE_DOUBLE_LEFT, -1))), tgt))
 #else
-                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                               // down and not blocked
-                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                               // up and not blocked
-                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |                        // right and not blocked
-                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                         // left and not blocked
-                                        (CAN_MOVE_BACKWARD_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
-                                        (CAN_MOVE_BACKWARD_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
-                                        (CAN_MOVE_FORWARD_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |   // up left
-                                        (CAN_MOVE_FORWARD_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8)))))  // up right
+                if (links_masked_out & (((free_mask << 8) & (cur_boosted_mask << 16)) |                                      // down and not blocked
+                                        ((free_mask >> 8) & (cur_boosted_mask >> 16)) |                                      // up and not blocked
+                                        (CAN_MOVE_DOUBLE_RIGHT & (cur_boosted_mask << 2) & (free_mask << 1)) |               // right and not blocked
+                                        (CAN_MOVE_DOUBLE_LEFT & (cur_boosted_mask >> 2) & (free_mask >> 1)) |                // left and not blocked
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) |  // down left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask << 9) & ((free_mask << 1) | (free_mask << 8))) | // down right
+                                        (CAN_MOVE_LEFT & (cur_boosted_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) |  // up left
+                                        (CAN_MOVE_RIGHT & (cur_boosted_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))))) // up right
 #endif
-                    return (-4096 * depth);
+                    return -24576 - depth;
             }
         }
     }
 
     --depth;
 
-    int betabeg = beta;
+    static const void *movesect_jmp_buf[] = {
+        &&__movesect_0, &&__movesect_1, &&__movesect_2, &&__movesect_3, &&__movesect_4,
+        &&__movesect_5, &&__movesect_6, &&__movesect_7};
 
     // check if the move is cached
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_sec[hash & (TABLE_SIZE - 1)];
-        tt_entry_t *__restrict__ entry = (bucket->depth_preferred.hash_entry == hash) ? &bucket->depth_preferred : ((bucket->scratch.hash_entry == hash) ? &bucket->scratch : NULL);
+        hash = rapidhashNano(is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask, args.raw, 0);
+        bucket = &tt_sec[hash & (TABLE_SIZE - 1)];
+        hash = (hash >> TABLE_SIZE_BITS) & ENTRY_HASH_MASK;
 
-        if (entry && entry->depth >= depth)
+        const uint64_t depth_preferred = bucket->depth_preferred;
+        const uint64_t scratch = bucket->scratch;
+
+        const uint64_t entry = ((depth_preferred & ENTRY_HASH_MASK) == hash) ? depth_preferred : (((scratch & ENTRY_HASH_MASK) == hash) ? scratch : 0ULL);
+
+        const uint32_t entry_flag = (entry >> (ENTRY_HASH_SIZE + 0)) & 3;
+        const uint32_t entry_depth = (entry >> (ENTRY_HASH_SIZE + 2)) & 31;
+        const uint32_t entry_best_section = (entry >> (ENTRY_HASH_SIZE + 2 + 5)) & 15;
+        const int32_t entry_eval = (int32_t)(int16_t)(entry >> 48);
+
+        if (entry_depth >= depth) // inherently wrong but it works
         {
-            if (entry->flag == TT_EXACT)
+            if (entry_flag == TT_EXACT)
             {
-                return entry->eval;
+                return entry_eval;
             }
-            else if (entry->flag == TT_LOWERBOUND)
+            else if (entry_flag == TT_LOWERBOUND)
             {
-                if (entry->eval >= beta)
-                    return entry->eval;
-                alpha = (entry->eval > alpha) ? entry->eval : alpha;
+                if (entry_eval >= beta)
+                    return entry_eval;
+                alpha = (entry_eval > alpha) ? entry_eval : alpha;
             }
-            else if (entry->flag == TT_UPPERBOUND)
+            else if (entry_flag == TT_UPPERBOUND)
             {
-                if (entry->eval <= alpha)
-                    return entry->eval;
-                beta = (entry->eval < beta) ? entry->eval : beta;
+                if (entry_eval <= alpha)
+                    return entry_eval;
+                beta = (entry_eval < beta) ? entry_eval : beta;
+            }
+        }
+
+        betabeg = beta;
+
+        if (entry)
+        {
+            loaded_best_section = entry_best_section;
+
+            if (loaded_best_section != 15u)
+            {
+                has_jumped = true;
+                goto *movesect_jmp_buf[loaded_best_section];
             }
         }
     }
 
-    if (__builtin_expect(sec_link_mask & 1152921504606846976ULL, 0))
+__minimize_begin:
+    has_jumped = false;
+
+#define MOVE_SECTION 15u
+    if (__builtin_expect((sec_link_mask & 1152921504606846976ULL) != 0, 0))
     {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~1152921504606846976ULL, position->is_link_mask & ~1152921504606846976ULL, position->is_boosted_mask & ~1152921504606846976ULL,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)7,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+        const int32_t new_eval = evaluation - (128 << args.fields.sec_link) + 7;
+
+        RNAB_ASSUME((is_sec_mask & 1152921504606846976ULL) && (is_link_mask & 1152921504606846976ULL));
 
         BRANCH_ENTER_MIN("deposit close");
-        int reschild = (depth != 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask & ~1152921504606846976ULL, is_link_mask & ~1152921504606846976ULL, is_boosted_mask & ~1152921504606846976ULL,
+                                                       (const extra_args_t){.raw = args.raw + 16777216ULL});
         BRANCH_EXIT_MIN();
 
         score = (reschild < score) ? reschild : score;
@@ -3091,16 +3932,15 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         }
     }
 
-    if (__builtin_expect(sec_link_mask & 576460752303423488ULL, 0))
+    if (__builtin_expect((sec_link_mask & 576460752303423488ULL) != 0, 0))
     {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~576460752303423488ULL, position->is_link_mask & ~576460752303423488ULL, position->is_boosted_mask & ~576460752303423488ULL,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)7,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+        const int32_t new_eval = evaluation - (128 << args.fields.sec_link) + 7;
+
+        RNAB_ASSUME((is_sec_mask & 576460752303423488ULL) && (is_link_mask & 576460752303423488ULL));
 
         BRANCH_ENTER_MIN("deposit close");
-        int reschild = (depth != 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask & ~576460752303423488ULL, is_link_mask & ~576460752303423488ULL, is_boosted_mask & ~576460752303423488ULL,
+                                                       (const extra_args_t){.raw = args.raw + 16777216ULL});
         BRANCH_EXIT_MIN();
 
         score = (reschild < score) ? reschild : score;
@@ -3112,16 +3952,15 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         }
     }
 
-    if (__builtin_expect(((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL, 0))
+    if (__builtin_expect((((boosted_link << 8) | (boosted_link >> 1) | (boosted_link << 1)) & free_mask & 1729382256910270464ULL) != 0, 0))
     {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask & ~cur_boosted_mask, position->is_link_mask & ~cur_boosted_mask, position->is_boosted_mask & ~cur_boosted_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec - (uint8_t)(get_ctz(cur_boosted_mask) >> 3),
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link, position->sec_link + 1, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+        const int32_t new_eval = evaluation - (128 << args.fields.sec_link) + (__builtin_ctzll(cur_boosted_mask) >> 3);
 
-        BRANCH_ENTER_MIN("deposit far");
-        int reschild = (depth != 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+        RNAB_ASSUME((is_sec_mask & cur_boosted_mask) && (is_link_mask & cur_boosted_mask) && (is_boosted_mask & cur_boosted_mask));
+
+        BRANCH_ENTER_MAX("deposit far");
+        const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask ^ cur_boosted_mask, is_link_mask ^ cur_boosted_mask, is_boosted_mask ^ cur_boosted_mask,
+                                                       (const extra_args_t){.raw = args.raw + 16777216ULL});
         BRANCH_EXIT_MIN();
 
         score = (reschild < score) ? reschild : score;
@@ -3133,6 +3972,122 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         }
     }
 
+    if (cur_boosted_mask)
+    {
+        const uint64_t cur_pos_bitboard = cur_boosted_mask;
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+
+        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
+
+            PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
+        }
+    }
+#undef MOVE_SECTION
+
+    MOVE_SECTION_BEGIN(0);
     if (cur_boosted_mask == 0)
     {
         uint64_t temp = sec_virus_mask;
@@ -3141,14 +4096,8 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MIN("boost virus");
-            int reschild = (depth != 0) ? minimax_max(depth, alpha, beta, &temp_field) : field_evaluate(&temp_field);
+            const int32_t reschild = BRANCHED_MINIMAX_CALL(depth > 1, minimax_max, minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             BRANCH_EXIT_MIN();
 
             score = (reschild < score) ? reschild : score;
@@ -3165,122 +4114,14 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     else
     {
         const uint64_t cur_pos_bitboard = cur_boosted_mask;
-
-        if (((cur_pos_bitboard & (free_mask >> 8) & (links_masked_out >> 16)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if ((cur_pos_bitboard & (links_masked_out >> 8)) != 0)
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (links_masked_out >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (links_masked_out >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_RIGHT & (links_masked_out << 2) & (free_mask << 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (links_masked_out << 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_DOUBLE_LEFT & (free_mask >> 1) & (links_masked_out >> 2)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (links_masked_out >> 1)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if ((cur_pos_bitboard & (links_masked_out << 8)) != 0)
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (links_masked_out << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (links_masked_out << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        if (((cur_pos_bitboard & (free_mask << 8) & (links_masked_out << 16)) != 0))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) && (fir_link_mask & new_pos_bitboard));
-
-            PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
-        }
-
-        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~secmask);
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+        const uint64_t legal_mask = (~enemy_firewall_mask) & (~links_masked_out) & (~is_sec_mask);
 
         if (((cur_pos_bitboard & (free_mask >> 8) & (legal_mask >> 16)) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 16);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 16, 2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3289,25 +4130,25 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 8, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask >> 7) & ((free_mask << 1) | (free_mask >> 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 7);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 7, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_FORWARD_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 9) & ((free_mask >> 1) | (free_mask >> 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 9);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 9, 1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3316,7 +4157,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 2);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3325,7 +4166,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3334,7 +4175,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 2);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 2, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3343,7 +4184,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(<<, 1, 0, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3352,25 +4193,25 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 8, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 9) & ((free_mask << 1) | (free_mask << 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 9);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 9, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
 
-        if (((cur_pos_bitboard & CAN_MOVE_BACKWARD_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
+        if (((cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask << 7) & ((free_mask >> 1) | (free_mask << 8))) != 0))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 7);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 7, -1, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
@@ -3379,155 +4220,14 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 16);
 
-            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & secmask) == 0);
+            RNAB_ASSUME((fir_link_mask & new_pos_bitboard) == 0 && (new_pos_bitboard & is_sec_mask) == 0);
 
             PERFORM_ITERATION_SEC(>>, 16, -2, true, ITERATION_CURRENT_IS_SECOND_UNKNOWN)
         }
     }
+    MOVE_SECTION_END(__minimize_begin);
 
-    uint64_t unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
-        const uint64_t legal_mask = (firmask & (~enemy_firewall_mask));
-
-        if (cur_pos_bitboard & (legal_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-        }
-
-        if (cur_pos_bitboard & (legal_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
-        }
-
-        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
-    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
-        const uint64_t legal_mask = (firmask & (~enemy_firewall_mask));
-
-        if (cur_pos_bitboard & (legal_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & (legal_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME(firmask & new_pos_bitboard);
-
-            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
-    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
-
-    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
-
-    while (unboosted_cards_mask)
-    {
-        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
-
-        if (cur_pos_bitboard & (free_mask >> 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        if (cur_pos_bitboard & (free_mask << 8))
-        {
-            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
-
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
-
-            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
-        }
-
-        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
-    }
-
+    MOVE_SECTION_BEGIN(1);
     unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
 
     RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
@@ -3535,12 +4235,165 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     while (unboosted_cards_mask)
     {
         const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__minimize_begin);
+
+    MOVE_SECTION_BEGIN(2);
+    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const uint64_t legal_mask = (is_fir_mask & (~enemy_firewall_mask));
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (legal_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (legal_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (legal_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (legal_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME(is_fir_mask & new_pos_bitboard);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__minimize_begin);
+
+    MOVE_SECTION_BEGIN(3);
+    unboosted_cards_mask = sec_link_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
 
         if (cur_pos_bitboard & (free_mask >> 8))
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_RIGHT & (free_mask << 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & CAN_MOVE_LEFT & (free_mask >> 1))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        if (cur_pos_bitboard & (free_mask << 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
+
+            PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_LINK)
+        }
+
+        clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
+    }
+    MOVE_SECTION_END(__minimize_begin);
+
+    MOVE_SECTION_BEGIN(4);
+    unboosted_cards_mask = sec_virus_mask & (~cur_boosted_mask);
+
+    RNAB_ASSUME(__builtin_popcountll(unboosted_cards_mask) >= 0 && __builtin_popcountll(unboosted_cards_mask) <= 4);
+
+    while (unboosted_cards_mask)
+    {
+        const uint64_t cur_pos_bitboard = (1ULL << (63 - __builtin_clzll(unboosted_cards_mask))); // front -> back
+        const int cur_pos_bit = (__builtin_clzll(cur_pos_bitboard) >> 3);
+
+        if (cur_pos_bitboard & (free_mask >> 8))
+        {
+            const uint64_t new_pos_bitboard = (cur_pos_bitboard << 8);
+
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_SEC(<<, 8, 1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
         }
@@ -3549,7 +4402,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 1);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_SEC(>>, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
         }
@@ -3558,7 +4411,7 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard << 1);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_SEC(<<, 1, 0, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
         }
@@ -3567,15 +4420,43 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t new_pos_bitboard = (cur_pos_bitboard >> 8);
 
-            RNAB_ASSUME((firmask & new_pos_bitboard) == 0 && (secmask & new_pos_bitboard) == 0);
+            RNAB_ASSUME((is_fir_mask & new_pos_bitboard) == 0 && (is_sec_mask & new_pos_bitboard) == 0);
 
             PERFORM_ITERATION_SEC(>>, 8, -1, false, ITERATION_CURRENT_IS_SECOND_VIRUS)
         }
 
         clear_highest_set_bit(unboosted_cards_mask, cur_pos_bitboard);
     }
+    MOVE_SECTION_END(__minimize_begin);
 
-    if (position->firewall_sec == 0)
+    MOVE_SECTION_BEGIN(5);
+    if (args.fields.firewall_sec)
+    {
+        BRANCH_ENTER_MIN("un-firewall");
+        int32_t reschild;
+        if (depth > 1)
+        {
+            reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                    (const extra_args_t){.raw = (args.raw & 18446744073709486335ULL)});
+            if (reschild < beta && alpha < beta - 1)
+                reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = (args.raw & 18446744073709486335ULL)});
+        }
+        else
+            reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                    (const extra_args_t){.raw = (args.raw & 18446744073709486335ULL)});
+        BRANCH_EXIT_MIN();
+
+        best_section = (reschild < score) ? MOVE_SECTION : best_section;
+        score = (reschild < score) ? reschild : score;
+        beta = (reschild < beta) ? reschild : beta;
+
+        if (beta <= alpha)
+        {
+            TRACK_ENTRY_MIN();
+        }
+    }
+    else
     {
         uint64_t temp = sec_link_mask & 16717361816799281127ULL;
 
@@ -3584,24 +4465,23 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
             const int bit_pos = 63 - __builtin_clzll(temp);
             const uint64_t pos = (1ULL << bit_pos); // front -> back
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, (uint8_t)((bit_pos << 1) | 1),
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MIN("firewall link");
-            int reschild;
-            if (depth > 0)
+
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_max(depth, beta - 1, beta, &temp_field);
+                reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
                 if (reschild < beta && alpha < beta - 1)
-                    reschild = minimax_max(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
             BRANCH_EXIT_MIN();
 
+            best_section = (reschild < score) ? MOVE_SECTION : best_section;
             score = (reschild < score) ? reschild : score;
             beta = (reschild < beta) ? reschild : beta;
 
@@ -3617,24 +4497,24 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
 
         if (temp)
         {
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, (uint8_t)(((63 - __builtin_clzll(temp)) << 1) | 1),
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
+            const int bit_pos = 63 - __builtin_clzll(temp);
 
             BRANCH_ENTER_MIN("firewall virus");
-            int reschild;
-            if (depth > 0)
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_max(depth, beta - 1, beta, &temp_field);
+                reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
                 if (reschild < beta && alpha < beta - 1)
-                    reschild = minimax_max(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask,
+                                        (const extra_args_t){.raw = args.raw + 256 + (bit_pos << 9)});
             BRANCH_EXIT_MIN();
 
+            best_section = (reschild < score) ? MOVE_SECTION : best_section;
             score = (reschild < score) ? reschild : score;
             beta = (reschild < beta) ? reschild : beta;
 
@@ -3644,36 +4524,10 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
             }
         }
     }
-    else
-    {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec,
-                                    position->firewall_fir, 0,
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
+    MOVE_SECTION_END(__minimize_begin);
 
-        BRANCH_ENTER_MIN("un-firewall");
-        int reschild;
-        if (depth > 0)
-        {
-            reschild = minimax_max(depth, beta - 1, beta, &temp_field);
-            if (reschild < beta && alpha < beta - 1)
-                reschild = minimax_max(depth, alpha, beta, &temp_field);
-        }
-        else
-            reschild = field_evaluate(&temp_field);
-        BRANCH_EXIT_MIN();
-
-        score = (reschild < score) ? reschild : score;
-        beta = (reschild < beta) ? reschild : beta;
-
-        if (beta <= alpha)
-        {
-            TRACK_ENTRY_MIN();
-        }
-    }
-
-    if (position->is_swap_available_sec)
+    MOVE_SECTION_BEGIN(6);
+    if (args.fields.is_swap_available_sec)
     {
         uint64_t link_mask = sec_link_mask;
 
@@ -3687,24 +4541,24 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
             {
                 const uint64_t virus_pos = (1ULL << (63 - __builtin_clzll(virus_mask))); // front -> back
 
-                const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask ^ (link_pos | virus_pos), position->is_boosted_mask,
-                                            position->forward_adv_fir, position->forward_adv_sec,
-                                            position->firewall_fir, position->firewall_sec,
-                                            position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                            position->is_swap_available_fir, 0};
+                const int32_t new_eval = evaluation + 256;
 
                 BRANCH_ENTER_MIN("swap");
-                int reschild;
-                if (depth > 0)
+                int32_t reschild;
+                if (depth > 1)
                 {
-                    reschild = minimax_max(depth, beta - 1, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw ^ 72057594037927936ULL});
                     if (reschild < beta && alpha < beta - 1)
-                        reschild = minimax_max(depth, alpha, beta, &temp_field);
+                        reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                                (const extra_args_t){.raw = args.raw ^ 72057594037927936ULL});
                 }
                 else
-                    reschild = field_evaluate(&temp_field);
+                    reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, new_eval, is_fir_mask, is_sec_mask, is_link_mask ^ (link_pos | virus_pos), is_boosted_mask,
+                                            (const extra_args_t){.raw = args.raw ^ 72057594037927936ULL});
                 BRANCH_EXIT_MIN();
 
+                best_section = (reschild < score) ? MOVE_SECTION : best_section;
                 score = (reschild < score) ? reschild : score;
                 beta = (reschild < beta) ? reschild : beta;
 
@@ -3719,7 +4573,9 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
             clear_highest_set_bit(link_mask, link_pos);
         }
     }
+    MOVE_SECTION_END(__minimize_begin);
 
+    MOVE_SECTION_BEGIN(7);
     if (cur_boosted_mask == 0)
     {
         uint64_t temp = sec_link_mask;
@@ -3728,22 +4584,16 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
         {
             const uint64_t pos = (1ULL << (63 - __builtin_clzll(temp))); // front -> back
 
-            const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask | pos,
-                                        position->forward_adv_fir, position->forward_adv_sec,
-                                        position->firewall_fir, position->firewall_sec,
-                                        position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                        position->is_swap_available_fir, position->is_swap_available_sec};
-
             BRANCH_ENTER_MIN("boost link");
-            int reschild;
-            if (depth > 0)
+            int32_t reschild;
+            if (depth > 1)
             {
-                reschild = minimax_max(depth, beta - 1, beta, &temp_field);
+                reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
                 if (reschild < beta && alpha < beta - 1)
-                    reschild = minimax_max(depth, alpha, beta, &temp_field);
+                    reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             }
             else
-                reschild = field_evaluate(&temp_field);
+                reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask | pos, args);
             BRANCH_EXIT_MIN();
 
             score = (reschild < score) ? reschild : score;
@@ -3759,22 +4609,16 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
     }
     else
     {
-        const field_t temp_field = {position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask & temp_field.is_fir_mask,
-                                    position->forward_adv_fir, position->forward_adv_sec,
-                                    position->firewall_fir, position->firewall_sec,
-                                    position->fir_link, position->sec_link, position->fir_virus, position->sec_virus,
-                                    position->is_swap_available_fir, position->is_swap_available_sec};
-
         BRANCH_ENTER_MIN("un-boost");
-        int reschild;
-        if (depth > 0)
+        int32_t reschild;
+        if (depth > 1)
         {
-            reschild = minimax_max(depth, beta - 1, beta, &temp_field);
+            reschild = MINIMAX_CALL(minimax_max, depth, beta - 1, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
             if (reschild < beta && alpha < beta - 1)
-                reschild = minimax_max(depth, alpha, beta, &temp_field);
+                reschild = MINIMAX_CALL(minimax_max, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
         }
         else
-            reschild = field_evaluate(&temp_field);
+            reschild = MINIMAX_CALL(minimax_max_term, depth, alpha, beta, evaluation, is_fir_mask, is_sec_mask, is_link_mask, is_boosted_mask ^ cur_boosted_mask, args);
         BRANCH_EXIT_MIN();
 
         score = (reschild < score) ? reschild : score;
@@ -3785,195 +4629,88 @@ static __attribute__((hot)) int minimax_min(int depth, int alpha, int beta, cons
             TRACK_ENTRY_MIN();
         }
     }
+    MOVE_SECTION_END(__minimize_begin);
+
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_sec[hash & (TABLE_SIZE - 1)];
-        *(tt_entry_t *__restrict__)((depth >= bucket->depth_preferred.depth) ? &bucket->depth_preferred : &bucket->scratch) = (tt_entry_t){hash, score, (uint8_t)depth, (uint8_t)((score >= betabeg) ? TT_LOWERBOUND : TT_EXACT)};
+        *(uint64_t *__restrict__)((depth >= ((bucket->depth_preferred >> (ENTRY_HASH_SIZE + 2)) & 31)) ? &bucket->depth_preferred : &bucket->scratch) = (hash) | ((uint64_t)(((score >= betabeg) ? TT_LOWERBOUND : TT_EXACT)) << (ENTRY_HASH_SIZE)) | ((uint64_t)((uint32_t)depth) << (ENTRY_HASH_SIZE + 2)) | ((uint64_t)best_section << (ENTRY_HASH_SIZE + 2 + 5)) | ((uint64_t)((uint16_t)(int16_t)score) << 48);
     }
     return score;
 
 track_min:
     if (depth > MIN_CACHE_DEPTH)
     {
-        uint64_t hash = rapidhashNano((const void *__restrict__)position, 0);
-        tt_bucket_t *__restrict__ bucket = &tt_sec[hash & (TABLE_SIZE - 1)];
-        *(tt_entry_t *__restrict__)((depth >= bucket->depth_preferred.depth) ? &bucket->depth_preferred : &bucket->scratch) = (tt_entry_t){hash, score, (uint8_t)depth, TT_UPPERBOUND};
+        *(uint64_t *__restrict__)((depth >= ((bucket->depth_preferred >> (ENTRY_HASH_SIZE + 2)) & 31)) ? &bucket->depth_preferred : &bucket->scratch) = (hash) | ((uint64_t)TT_UPPERBOUND << (ENTRY_HASH_SIZE)) | ((uint64_t)((uint32_t)depth) << (ENTRY_HASH_SIZE + 2)) | ((uint64_t)best_section << (ENTRY_HASH_SIZE + 2 + 5)) | ((uint64_t)((uint16_t)(int16_t)score) << 48);
     }
     return score;
 }
 
 END_BRANCH_TRACKING();
 
+#undef MOVE_SECTION_BEGIN
+#undef MOVE_SECTION_END
 #undef PERFORM_ITERATION_FIR
 #undef PERFORM_ITERATION_SEC
 
-static minimax_main_result_t minimax_main(const int depth, int alpha, int beta, const bool player, field_t *__restrict__ position)
+#undef TRACK_ENTRY_MIN
+#undef TRACK_ENTRY_MAX
+
+#undef MINIMAX_FUNC
+#undef MINIMAX_UNPACK
+
+typedef struct
 {
-    cur_search_depth = depth;
-    TIME_TYPE start, stop;
+    int32_t move_id;
+    int32_t move_eval;
+    bool is_exact; // false = upper bound from failed null-window
+} move_scores_wrapper;
 
-    assert(depth < MAX_DEPTH);
+STATIC_BSS field_t possible_moves_buf[MAX_MOVES];
+STATIC_BSS int32_t possible_moves_buf_moves_count;
 
-    if (player)
-    {
-        possible_moves_t all_moves = possible_moves(position, true);
-        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
-            if (all_moves.moves[i].fir_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * depth)};
-
-        field_t best_field = all_moves.moves[0];
-
-        CLEAR_TT();
-
-        bool is_first_move = true;
-
-        for (int i = 0; i < all_moves.moves_count; ++i)
-        {
-            get_time(start);
-
-            field_t pos = all_moves.moves[i];
-
-            int childres;
-            if (is_first_move)
-            {
-                childres = minimax_min(depth - 1, alpha, beta, &pos);
-                get_time(stop);
-                debug_printf("Maximize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
-            }
-            else
-            {
-                childres = minimax_min(depth - 1, alpha, alpha + 1, &pos);
-                get_time(stop);
-                if (childres > alpha)
-                {
-                    debug_printf("Maximize first minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
-                    get_time(start);
-                    childres = minimax_min(depth - 1, alpha, beta, &pos);
-                    get_time(stop);
-                    debug_printf("Maximize second minimax call improv time:%" PRId64 "ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
-                }
-                else
-                {
-                    debug_printf("Maximize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), alpha, childres);
-                }
-            }
-
-            best_field = (childres > alpha) ? pos : best_field;
-            alpha = (childres > alpha) ? childres : alpha;
-            is_first_move = false;
-        }
-
-        return (minimax_main_result_t){.best_field = best_field, .evaluation = alpha};
-    }
-    else
-    {
-        possible_moves_t all_moves = possible_moves(position, false);
-        for (int i = 0; i < all_moves.moves_count; ++i) // check if there is a winning position
-            if (all_moves.moves[i].sec_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * depth)};
-
-        field_t best_field = all_moves.moves[0];
-
-        CLEAR_TT();
-
-        bool is_first_move = true;
-
-        for (int i = 0; i < all_moves.moves_count; ++i)
-        {
-            get_time(start);
-            int childres;
-
-            field_t pos = all_moves.moves[i];
-
-            if (is_first_move)
-            {
-                childres = minimax_max(depth - 1, alpha, beta, &pos);
-                get_time(stop);
-                debug_printf("Minimize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
-            }
-            else
-            {
-                childres = minimax_max(depth - 1, beta - 1, beta, &pos);
-                get_time(stop);
-                if (childres < beta)
-                {
-                    debug_printf("Minimize first minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
-                    get_time(start);
-                    childres = minimax_max(depth - 1, alpha, beta, &pos);
-                    get_time(stop);
-                    debug_printf("Minimize second minimax call improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
-                }
-                else
-                {
-                    debug_printf("Minimize first minimax call no-improv time:%" PRId64 " ms, %d -> %d\n", get_time_diff_millis(stop, start), beta, childres);
-                }
-            }
-
-            best_field = (childres < beta) ? pos : best_field;
-            beta = (childres < beta) ? childres : beta;
-            is_first_move = false;
-        }
-
-        return (minimax_main_result_t){.best_field = best_field, .evaluation = beta};
-    }
-}
-
-static const uint8_t isqrt_lut[256] = {0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15};
-
-static minimax_main_result_t minimax_iteration_main(const int max_depth, const int64_t max_search_time, int alpha, int beta, const bool player, field_t *__restrict__ position)
+static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_search_time, int32_t alpha, int32_t beta, const bool player, const field_t *__restrict__ position, minimax_main_result_t *__restrict__ ret)
 {
-    assert(max_depth >= 2 && max_depth % 2 == 0 && "Depth must be at least 2 and even (divisible by 2) for iterative deepening");
-    assert(max_search_time >= 100 && "max_search_time must be at least 100 milliseconds");
-    assert(max_depth < MAX_DEPTH);
+    STATIC_BSS move_scores_wrapper move_scores[MAX_MOVES];
+    STATIC_BSS TIME_TYPE start, start_it, stop, global_start;
+    STATIC_BSS field_t *best_field;
+    STATIC_BSS field_t *pos;
 
-    TIME_TYPE start, start_it, stop, global_start;
-    minimax_main_result_t best_result;
+    CLEAR_TT();
 
-    typedef struct
-    {
-        int move_id;
-        int move_eval;
-        bool is_exact; // false = upper bound from failed null-window
-    } move_scores_wrapper;
+    start_search_timer(max_search_time);
 
     debug_printf("minimax_iteration_main entry\n");
 
-    get_time(global_start);
+    debug_get_time(global_start);
 
     if (player)
     {
-        possible_moves_t all_moves = possible_moves(position, true);
-        for (int i = 0; i < all_moves.moves_count; ++i)
-            if (all_moves.moves[i].fir_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (4096 * max_depth)};
+        possible_moves_max(position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask, position->args, possible_moves_buf, &possible_moves_buf_moves_count);
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            if (possible_moves_buf[i].args.fields.fir_link > 3)
+            {
+                *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = 24576 + max_depth};
+                return;
+            }
 
-        uint64_t branching_factor_guess = (uint64_t)isqrt_lut[all_moves.moves_count * 2];
+        int32_t prev_alpha = alpha;
 
-        debug_printf("branching_factor_guess = %" PRIu64 "\n", branching_factor_guess);
-
-        field_t best_field = all_moves.moves[0];
-        int prev_alpha = alpha;
-
-        move_scores_wrapper move_scores[MAX_MOVES];
-        for (int i = 0; i < all_moves.moves_count; ++i)
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
             move_scores[i] = (move_scores_wrapper){i, MIN, false};
 
-        for (int current_depth = 2; current_depth <= max_depth; current_depth += 2)
+        for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
         {
-            cur_search_depth = current_depth; // dont forget to cur_search_depth locally!
+            int32_t best_move_idx = -1;
 
-            int best_move_idx = -1;
+            uint64_t cur_rec_count = rec_counter;
+            debug_get_time(start);
 
-            int64_t cur_rec_count = rec_counter;
-            get_time(start);
-
-            if (current_depth > 2)
+            if (current_depth > 4)
             {
-                for (int i = 1; i < all_moves.moves_count; ++i)
+                for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
                 {
                     move_scores_wrapper key = move_scores[i];
-                    int j = i - 1;
+                    int32_t j = i - 1;
                     while (j >= 0)
                     {
                         move_scores_wrapper *prev = &move_scores[j];
@@ -3994,46 +4731,66 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 }
             }
 
-            int iteration_alpha = prev_alpha - 56;
-            for (int i = 0; i < all_moves.moves_count; ++i)
+            int32_t iteration_alpha = prev_alpha - 5;
+            int32_t iteration_beta = (current_depth == 4) ? MAX : (prev_alpha + 5);
+
+            debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
             {
-                get_time(start_it);
+                int32_t move_idx = move_scores[i].move_id;
+                pos = &possible_moves_buf[move_idx];
 
-                int move_idx = move_scores[i].move_id;
+                debug_get_time(start_it);
 
-                field_t pos = all_moves.moves[move_idx];
-
-                int childres;
+                int32_t childres;
                 if (i == 0) // very likely for the score to be higher
                 {
-                    childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                    get_time(stop);
+                    childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                    debug_get_time(stop);
 
                     move_scores[i].is_exact = true;
 
-                    // debug_printf(FG_BLUE "[f %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                    // fflush(stdout);
+                    // debug_printf(FG_BLUE "[f %d: %d -> %d : %lld] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                 }
                 else
                 {
-                    childres = minimax_min(current_depth - 1, iteration_alpha, iteration_alpha + 1, &pos);
-                    get_time(stop);
+                    childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_alpha + 1, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                    debug_get_time(stop);
+
                     // debug_printf(FG_GREEN "[s %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                    // fflush(stdout);
+
                     if (childres > iteration_alpha)
                     {
-                        childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                        get_time(stop);
+                        childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                        debug_get_time(stop);
 
                         move_scores[i].is_exact = true;
 
                         // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                        // fflush(stdout);
                     }
                     else
                     {
                         move_scores[i].is_exact = false;
                     }
+                }
+
+                if (should_exit)
+                {
+                    if (best_move_idx != -1)
+                    {
+                        // at least one move completed and beat the lower bound
+                        // best_field and iteration_alpha already reflect the best found so far
+                        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
+                    }
+
+                    debug_printf("Search order: ");
+                    for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                        debug_printf("%d, ", move_scores[u].move_id);
+                    debug_printf("\n");
+                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d\n", i, possible_moves_buf_moves_count, best_move_idx, iteration_alpha);
+
+                    return;
                 }
 
                 move_scores[i].move_eval = childres;
@@ -4045,62 +4802,77 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     best_move_idx = move_idx;
                 }
 
-                int64_t elapsed_time = get_time_diff_millis(stop, global_start);
-
-                if (elapsed_time > max_search_time)
+                if (iteration_beta <= iteration_alpha)
                 {
-                    debug_printf("Search order: ");
-                    for (int u = 0; u < all_moves.moves_count; ++u)
-                        debug_printf("%d, ", move_scores[u].move_id);
-                    debug_printf("\n");
-                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
-
-                    return best_result;
+                    debug_printf("cutoff!!!!\n");
+                    break;
                 }
             }
 
-            if (iteration_alpha == prev_alpha - 56)
+            bool guessed_incorrectly = (iteration_alpha <= prev_alpha - 5) || (iteration_alpha >= iteration_beta);
+
+            iteration_beta = (iteration_alpha >= iteration_beta) ? MAX : iteration_beta;
+            iteration_alpha = (iteration_alpha <= prev_alpha - 5) ? MIN : iteration_alpha;
+
+            if (guessed_incorrectly)
             {
-                debug_printf("Guess failed\n");
+                debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
 
-                iteration_alpha = MIN;
-                for (int i = 0; i < all_moves.moves_count; ++i)
+                best_move_idx = -1;
+
+                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
                 {
-                    get_time(start_it);
+                    debug_get_time(start_it);
 
-                    int move_idx = move_scores[i].move_id;
+                    int32_t move_idx = move_scores[i].move_id;
 
-                    field_t pos = all_moves.moves[move_idx];
+                    pos = &possible_moves_buf[move_idx];
 
-                    int childres;
+                    int32_t childres;
                     if (i == 0)
                     {
-                        childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                        get_time(stop);
+                        childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+
+                        debug_get_time(stop);
 
                         move_scores[i].is_exact = true;
                         // debug_printf(FG_BLUE "[f %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                        // fflush(stdout);
                     }
                     else
                     {
-                        childres = minimax_min(current_depth - 1, iteration_alpha, iteration_alpha + 1, &pos);
-                        get_time(stop);
+                        childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_alpha + 1, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                        debug_get_time(stop);
                         // debug_printf(FG_GREEN "[s %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                        // fflush(stdout);
                         if (childres > iteration_alpha)
                         {
-                            childres = minimax_min(current_depth - 1, iteration_alpha, beta, &pos);
-                            get_time(stop);
+                            childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                            debug_get_time(stop);
 
                             move_scores[i].is_exact = true;
                             // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
-                            // fflush(stdout);
                         }
                         else
                         {
                             move_scores[i].is_exact = false;
                         }
+                    }
+
+                    if (should_exit)
+                    {
+                        if (best_move_idx != -1)
+                        {
+                            // at least one move completed and beat the lower bound
+                            // best_field and iteration_alpha already reflect the best found so far
+                            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
+                        }
+
+                        debug_printf("Search order: ");
+                        for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                            debug_printf("%d, ", move_scores[u].move_id);
+                        debug_printf("\n");
+                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d\n", i, possible_moves_buf_moves_count, best_move_idx, iteration_alpha);
+
+                        return;
                     }
 
                     move_scores[i].move_eval = childres;
@@ -4111,94 +4883,74 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         iteration_alpha = childres;
                         best_move_idx = move_idx;
                     }
-
-                    get_time(stop);
-
-                    int64_t elapsed_time = get_time_diff_millis(stop, global_start);
-
-                    if (elapsed_time > max_search_time)
-                    {
-                        debug_printf("Search order: ");
-                        for (int u = 0; u < all_moves.moves_count; ++u)
-                            debug_printf("%d, ", move_scores[u].move_id);
-                        debug_printf("\n");
-                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_alpha, elapsed_time - max_search_time);
-
-                        return best_result;
-                    }
                 }
             }
 
             debug_printf("Search order: ");
-            for (int i = 0; i < all_moves.moves_count; ++i)
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
                 debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
-            get_time(stop);
+            debug_get_time(stop);
 
-            int64_t duration = get_time_diff_millis(stop, start);
+            uint64_t duration = get_time_diff_millis(stop, start);
 
-            debug_printf("Depth %d completed in %" PRId64 " ms (best_move_idx = %d), evaluation: %d, checked_pos: %" PRId64 ", pos/ms: %f\n",
+            debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+#ifdef BRANCH_DEBUG
+                         ", checked_pos: %llu, pos/ms: %llu\n",
+#else
+                         "\n",
+#endif
                          current_depth,
                          duration,
                          best_move_idx,
-                         iteration_alpha,
+                         iteration_alpha
+#ifdef BRANCH_DEBUG
+                         ,
                          rec_counter - cur_rec_count,
-                         (double)(rec_counter - cur_rec_count) / ((double)duration / 1000000.0));
+                         (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+#else
+            );
+#endif
 
             prev_alpha = iteration_alpha;
-            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_alpha};
+            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
 
-            if (iteration_alpha > 4096 || iteration_alpha < -4096)
+            if (iteration_alpha > 16384 || iteration_alpha < -16384)
             {
                 debug_printf("end condition detected, exiting\n");
-                return best_result;
-            }
-
-            debug_printf("cur=%" PRId64 ", next_guess=%" PRId64 "\n", duration, (int64_t)(duration * branching_factor_guess));
-
-            if ((int64_t)(duration * branching_factor_guess) > max_search_time)
-            {
-                debug_printf("Speculative exit\n");
-                return best_result;
+                break;
             }
         }
-
-        return best_result;
     }
     else
     {
-        possible_moves_t all_moves = possible_moves(position, false);
-        for (int i = 0; i < all_moves.moves_count; ++i)
-            if (all_moves.moves[i].sec_link > 3)
-                return (minimax_main_result_t){.best_field = all_moves.moves[i], .evaluation = (-4096 * max_depth)};
-
-        uint64_t branching_factor_guess = (uint64_t)isqrt_lut[all_moves.moves_count * 2];
-
-        debug_printf("branching_factor_guess = %" PRIu64 "\n", branching_factor_guess);
-
-        field_t best_field = all_moves.moves[0];
-        int prev_beta = beta;
-
-        move_scores_wrapper move_scores[MAX_MOVES];
-        for (int i = 0; i < all_moves.moves_count; ++i)
-            move_scores[i] = (move_scores_wrapper){i, MIN, false};
-
-        for (int current_depth = 2; current_depth <= max_depth; current_depth += 2)
-        {
-            cur_search_depth = current_depth; // dont forget to cur_search_depth locally!
-
-            int best_move_idx = -1;
-
-            int64_t cur_rec_count = rec_counter;
-            get_time(start);
-
-            if (current_depth > 2)
+        possible_moves_min(position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask, position->args, possible_moves_buf, &possible_moves_buf_moves_count);
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            if (possible_moves_buf[i].args.fields.sec_link > 3)
             {
-                for (int i = 1; i < all_moves.moves_count; ++i)
+                *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = -24576 - max_depth};
+                return;
+            }
+
+        int32_t prev_beta = beta;
+
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            move_scores[i] = (move_scores_wrapper){i, MAX, false};
+
+        for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+        {
+            int32_t best_move_idx = -1;
+
+            uint64_t cur_rec_count = rec_counter;
+            debug_get_time(start);
+
+            if (current_depth > 4)
+            {
+                for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
                 {
                     move_scores_wrapper key = move_scores[i];
-                    int j = i - 1;
+                    int32_t j = i - 1;
                     while (j >= 0)
                     {
                         move_scores_wrapper *prev = &move_scores[j];
@@ -4219,26 +4971,30 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                 }
             }
 
-            int iteration_beta = prev_beta + 56;
-            for (int i = 0; i < all_moves.moves_count; ++i)
-            {
-                int move_idx = move_scores[i].move_id;
-                field_t pos = all_moves.moves[move_idx];
+            int32_t iteration_alpha = (current_depth == 4) ? MIN : (prev_beta - 5);
+            int32_t iteration_beta = prev_beta + 5;
 
-                int childres;
+            debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            {
+                int32_t move_idx = move_scores[i].move_id;
+                pos = &possible_moves_buf[move_idx];
+
+                int32_t childres;
 
                 if (i == 0) // very likely for the score to be higher
                 {
-                    childres = minimax_max(current_depth - 1, alpha, iteration_beta, &pos);
+                    childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
 
                     move_scores[i].is_exact = true;
                 }
                 else
                 {
-                    childres = minimax_max(current_depth - 1, iteration_beta - 1, iteration_beta, &pos);
+                    childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_beta - 1, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                     if (childres < iteration_beta)
                     {
-                        childres = minimax_max(current_depth - 1, alpha, iteration_beta, &pos);
+                        childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                         move_scores[i].is_exact = true;
                     }
                     else
@@ -4247,54 +5003,69 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                     }
                 }
 
+                if (should_exit)
+                {
+                    if (best_move_idx != -1)
+                    {
+                        // at least one move completed and beat the upper bound
+                        // best_field and iteration_beta already reflect the best found so far
+                        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+                    }
+
+                    debug_printf("Search order: ");
+                    for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                        debug_printf("%d, ", move_scores[u].move_id);
+                    debug_printf("\n");
+                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d\n", i, possible_moves_buf_moves_count, best_move_idx, iteration_beta);
+
+                    return;
+                }
+
                 move_scores[i].move_eval = childres;
 
                 if (childres < iteration_beta)
                 {
-                    best_field = all_moves.moves[move_idx];
+                    best_field = pos;
                     iteration_beta = childres;
                     best_move_idx = move_idx;
                 }
 
-                get_time(stop);
-
-                int64_t elapsed_time = get_time_diff_millis(stop, global_start);
-
-                if (elapsed_time > max_search_time)
+                if (iteration_beta <= iteration_alpha)
                 {
-                    debug_printf("Search order: ");
-                    for (int u = 0; u < all_moves.moves_count; ++u)
-                        debug_printf("%d, ", move_scores[u].move_id);
-                    debug_printf("\n");
-                    debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
-
-                    return best_result;
+                    debug_printf("cutoff!!!!\n");
+                    break;
                 }
             }
 
-            if (iteration_beta == prev_beta + 56)
-            {
-                debug_printf("Guess failed\n");
+            bool guessed_incorrectly = (iteration_beta >= prev_beta + 5) || (iteration_beta <= iteration_alpha);
 
-                iteration_beta = MAX;
-                for (int i = 0; i < all_moves.moves_count; ++i)
+            iteration_alpha = (iteration_beta <= iteration_alpha) ? MIN : iteration_alpha;
+            iteration_beta = (iteration_beta >= prev_beta + 5) ? MAX : iteration_beta;
+
+            if (guessed_incorrectly)
+            {
+                debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+                best_move_idx = -1;
+
+                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
                 {
-                    int move_idx = move_scores[i].move_id;
-                    field_t pos = all_moves.moves[move_idx];
-                    int childres;
+                    int32_t move_idx = move_scores[i].move_id;
+                    pos = &possible_moves_buf[move_idx];
+                    int32_t childres;
 
                     if (i == 0)
                     {
-                        childres = minimax_max(current_depth - 1, alpha, iteration_beta, &pos);
+                        childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
 
                         move_scores[i].is_exact = true;
                     }
                     else
                     {
-                        childres = minimax_max(current_depth - 1, iteration_beta - 1, iteration_beta, &pos);
+                        childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_beta - 1, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                         if (childres < iteration_beta)
                         {
-                            childres = minimax_max(current_depth - 1, alpha, iteration_beta, &pos);
+                            childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                             move_scores[i].is_exact = true;
                         }
                         else
@@ -4303,67 +5074,74 @@ static minimax_main_result_t minimax_iteration_main(const int max_depth, const i
                         }
                     }
 
+                    if (should_exit)
+                    {
+                        if (best_move_idx != -1)
+                        {
+                            // at least one move completed and beat the upper bound
+                            // best_field and iteration_beta already reflect the best found so far
+                            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+                        }
+
+                        debug_printf("Search order: ");
+                        for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                            debug_printf("%d, ", move_scores[u].move_id);
+                        debug_printf("\n");
+                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d\n", i, possible_moves_buf_moves_count, best_move_idx, iteration_beta);
+
+                        return;
+                    }
+
                     move_scores[i].move_eval = childres;
 
                     if (childres < iteration_beta)
                     {
-                        best_field = all_moves.moves[move_idx];
+                        best_field = pos;
                         iteration_beta = childres;
                         best_move_idx = move_idx;
-                    }
-
-                    get_time(stop);
-
-                    int64_t elapsed_time = get_time_diff_millis(stop, global_start);
-
-                    if (elapsed_time > max_search_time)
-                    {
-                        debug_printf("Search order: ");
-                        for (int u = 0; u < all_moves.moves_count; ++u)
-                            debug_printf("%d, ", move_scores[u].move_id);
-                        debug_printf("\n");
-                        debug_printf("timed out p1 %d/%d, best_move_idx=%d, eval=%d, off = %" PRId64 "\n", i, all_moves.moves_count, best_move_idx, iteration_beta, elapsed_time - max_search_time);
-
-                        return best_result;
                     }
                 }
             }
 
             debug_printf("Search order: ");
-            for (int i = 0; i < all_moves.moves_count; ++i)
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
                 debug_printf("%d, ", move_scores[i].move_id);
             debug_printf("\n");
 
-            get_time(stop);
+            debug_get_time(stop);
 
             int64_t duration = get_time_diff_millis(stop, start);
 
-            debug_printf("Depth %d completed in %" PRId64 " ms (best_move_idx = %d), evaluation: %d, checked_pos: %" PRId64 ", pos/ms: %f\n",
+            debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+#ifdef BRANCH_DEBUG
+                         ", checked_pos: %llu, pos/ms: %llu\n",
+#else
+                         "\n",
+#endif
                          current_depth,
                          duration,
                          best_move_idx,
-                         iteration_beta,
+                         iteration_beta
+#ifdef BRANCH_DEBUG
+                         ,
                          rec_counter - cur_rec_count,
-                         (double)(rec_counter - cur_rec_count) / ((double)duration / 1000000.0));
+                         (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+#else
+            );
+#endif
 
             prev_beta = iteration_beta;
-            best_result = (minimax_main_result_t){.best_field = best_field, .evaluation = iteration_beta};
+            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
 
-            if (iteration_beta > 4096 || iteration_beta < -4096)
+            if (iteration_beta > 16384 || iteration_beta < -16384)
             {
                 debug_printf("end condition detected, exiting\n");
-                return best_result;
-            }
-
-            debug_printf("cur=%" PRId64 ", next_guess=%" PRId64 "\n", duration, (int64_t)(duration * branching_factor_guess));
-
-            if ((int64_t)(duration * branching_factor_guess) > max_search_time)
-            {
-                debug_printf("Speculative exit\n");
-                return best_result;
+                break;
             }
         }
-
-        return best_result;
     }
+
+    stop_search_timer();
 }
+
+#undef MINIMAX_CALL
