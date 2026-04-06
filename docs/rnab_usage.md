@@ -90,8 +90,8 @@ struct generic_representation {
   Time budget for search. Actual time may slightly exceed this value. Pass UINT32_MAX to disable limit.
 
 - `player`  
-  • `0` = first player to move  
-  • `1` = second player to move
+  • `1` = first player to move  
+  • `0` = second player to move
 
 ### Error codes
 
