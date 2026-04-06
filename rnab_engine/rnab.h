@@ -1,44 +1,26 @@
-#include "rnab_impl.c"
+#include "librnab.c"
 
-#ifdef _WIN32
-#define EXPORT_API __declspec(dllexport)
-#else
-#define EXPORT_API __attribute__((visibility("default")))
-#endif
+#ifdef RNAB_BENCHMARK
 
 typedef struct
-{
-    uint64_t player_first_card_mask;
-    uint64_t player_second_card_mask;
-    uint64_t link_card_mask;
-    int32_t player_first_boosted_cell;
-    int32_t player_second_boosted_cell;
-    int32_t player_first_firewalled_cell;
-    int32_t player_second_firewalled_cell;
-    int32_t player_first_captured_links_num;
-    int32_t player_first_captured_viruses_num;
-    int32_t player_second_captured_links_num;
-    int32_t player_second_captured_viruses_num;
-    int32_t player_first_is_404_not_found_available;
-    int32_t player_second_is_404_not_found_available;
-} generic_representation;
-
-static void print_generic_representation(generic_representation *r)
-{
-    __builtin_printf("(generic_representation){0x%016" PRIx64 ", 0x%016" PRIx64 ", 0x%016" PRIx64 ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d}\n", r->player_first_card_mask, r->player_second_card_mask, r->link_card_mask, r->player_first_boosted_cell, r->player_second_boosted_cell, r->player_first_firewalled_cell, r->player_second_firewalled_cell, r->player_first_captured_links_num, r->player_first_captured_viruses_num, r->player_second_captured_links_num, r->player_second_captured_viruses_num, r->player_first_is_404_not_found_available, r->player_second_is_404_not_found_available);
-}
-
-typedef struct 
 {
     generic_representation position;
     int32_t depth;
 } benchmark_t;
 
 static const benchmark_t benchmark_array[] = {
+        //  {(generic_representation){4503599627370498ULL,576460752303423589ULL,4503599627370597ULL,1,59,52,61,1,3,2,3,1,1}, 30},
     // {(generic_representation){0x0000000840040000, 0x000000000010001a, 0x0000000840100018,30,20,-1,-1,0,3,3,3,1,0}, 18},
     // {(generic_representation){0x0000000000080090, 0x0002000002000008, 0x0002000002080080,19,49,26,10,2,3,2,3,1,0}, 18},
     // {(generic_representation){0x00000000000100a0, 0x0000000000080600, 0x0000000000010680,16,19,15,-1,2,3,2,3,1,0}, 16},
     // {(generic_representation){0x0410048000000000, 0x08000000000000e5, 0x04000400000000a5,58,59,42,-1,0,2,2,2,1,1}, 14},
+    // {(generic_representation){16652059622202408960ULL,6375ULL,2742692173068632229ULL,-1,11,-1,-1,0,0,0,0,1,1}, 14},
+
+    // {(generic_representation){0x0aa8000000001000, 0x10000000000000c3, 0x0220000000000081, 12, 60, 53, 0, 2, 1, 2, 0, 1, 1}, 16},
+    // {(generic_representation){0x06a8000000001000, 0x10000000000000c3, 0x1020000000001001, 12, 60, 53, 0, 2, 1, 2, 0, 0, 0}, 12},
+    // {(generic_representation){0x06a8000000000020, 0x40000000000000c3, 0x0220000000000081, 5, 62, 53, 0, 2, 1, 2, 0, 1, 1}, 16},
+
+    // {(generic_representation){1152921504606847105ULL,2251799813685346ULL,2251799813685441ULL,0,5,7,51,2,2,2,3,1,0}, 16},
     {(generic_representation){0xe718000000000000, 0x00000000000018e7, 0xa5000000000000a5, -1, -1, -1, -1, 0, 0, 0, 0, 1, 1}, 16},
     {(generic_representation){0x8008000010000000, 0x2000000000003007, 0x0008000010000005, 28, 61, 51, -1, 2, 0, 2, 3, 0, 1}, 14},
     {(generic_representation){0x8008001000000000, 0x0040000000001027, 0x8008000000000005, 36, 54, 51, -1, 2, 0, 2, 3, 1, 1}, 14},
@@ -47,223 +29,86 @@ static const benchmark_t benchmark_array[] = {
     {(generic_representation){0x4008000010000000, 0x2000000000003007, 0x0008000010000005, 28, 61, 51, 61, 2, 0, 2, 3, 0, 1}, 14},
     {(generic_representation){0xa100000000100000, 0x00000000000000a8, 0xa000000000000020, 20, 5, -1, 5, 3, 1, 2, 3, 1, 1}, 16},
     {(generic_representation){0x8101000000000100, 0x0000004000000004, 0x8000000000000104, 8, 38, 63, 2, 2, 3, 3, 2, 0, 0}, 20},
-
 };
 
-static generic_representation intern_to_generic_representation(field_t *__restrict__ pos)
+#define CHECK_WIN()                          \
+    if (pos.args.fields.sec_link == 4)       \
+    {                                        \
+        _printf("Player one wins!\n");       \
+        print_field(&pos);                   \
+        break;                               \
+    }                                        \
+    else if (pos.args.fields.sec_virus == 4) \
+    {                                        \
+        _printf("Player one loses!\n");      \
+        print_field(&pos);                   \
+        break;                               \
+    }                                        \
+    else if (pos.args.fields.fir_link == 4)  \
+    {                                        \
+        _printf("Player two wins!\n");       \
+        print_field(&pos);                   \
+        break;                               \
+    }                                        \
+    else if (pos.args.fields.fir_virus == 4) \
+    {                                        \
+        _printf("Player one loses!\n");      \
+        print_field(&pos);                   \
+        break;                               \
+    }
+
+static void simulate_game(generic_representation *__restrict__ init_game_state, bool player_to_move, int32_t analysis_depth)
 {
-    generic_representation res = {0};
-
-    res.player_first_card_mask = pos->is_fir_mask;
-    res.player_second_card_mask = pos->is_sec_mask;
-
-    res.link_card_mask = pos->is_link_mask;
-
-    res.player_first_boosted_cell = ((pos->is_fir_mask & pos->is_boosted_mask) ? (__builtin_ctzll(pos->is_fir_mask & pos->is_boosted_mask)) : -1);
-    res.player_second_boosted_cell = ((pos->is_sec_mask & pos->is_boosted_mask) ? (__builtin_ctzll(pos->is_sec_mask & pos->is_boosted_mask)) : -1);
-
-    res.player_first_firewalled_cell = ((pos->firewall_fir == 0) ? -1 : (pos->firewall_fir >> 1));
-    res.player_second_firewalled_cell = ((pos->firewall_sec == 0) ? -1 : (pos->firewall_sec >> 1));
-
-    res.player_first_captured_links_num = pos->fir_link;
-    res.player_first_captured_viruses_num = pos->fir_virus;
-
-    res.player_second_captured_links_num = pos->sec_link;
-    res.player_second_captured_viruses_num = pos->sec_virus;
-
-    res.player_first_is_404_not_found_available = ((pos->is_swap_available_fir == 1) ? 1 : 0);
-    res.player_second_is_404_not_found_available = ((pos->is_swap_available_sec == 1) ? 1 : 0);
-
-    return res;
-}
-
-static field_t generic_representation_to_intern(const generic_representation *__restrict__ game_state)
-{
-    assert(minimax_iteration_main);
-    assert(minimax_main);
-
-    field_t position;
-#define IS_ARG_LEGIT(arg_var) \
-    assert((arg_var == -1 || (arg_var >= 0 && arg_var <= 63)) && "Illegal argument (" #arg_var ")")
-
-    IS_ARG_LEGIT(game_state->player_first_boosted_cell);
-    IS_ARG_LEGIT(game_state->player_second_boosted_cell);
-    IS_ARG_LEGIT(game_state->player_first_firewalled_cell);
-    IS_ARG_LEGIT(game_state->player_second_firewalled_cell);
-
-#undef IS_ARG_LEGIT
-
-    position.is_fir_mask = game_state->player_first_card_mask;
-    position.is_sec_mask = game_state->player_second_card_mask;
-    position.is_link_mask = game_state->link_card_mask;
-    position.is_boosted_mask = 0;
-
-    position.firewall_fir = 0;
-    position.firewall_sec = 0;
-
-    position.forward_adv_fir = 0;
-    position.forward_adv_sec = 0;
-
-    assert((position.is_fir_mask & position.is_sec_mask) == 0 && "Player one cards may not be on top of player two cards");
-
-    uint64_t temp;
-
-    temp = position.is_fir_mask;
-
-    while (temp)
-    {
-        const int cur_pos = __builtin_ctzll(temp);
-        const uint64_t cur_mask = 1ULL << cur_pos;
-
-        position.forward_adv_fir += (7 - (cur_pos >> 3));
-
-        temp ^= cur_mask;
-    }
-
-    temp = position.is_sec_mask;
-
-    while (temp)
-    {
-        const int cur_pos = __builtin_ctzll(temp);
-        const uint64_t cur_mask = 1ULL << cur_pos;
-
-        position.forward_adv_sec += (cur_pos >> 3);
-
-        temp ^= cur_mask;
-    }
-
-    if (game_state->player_first_boosted_cell >= 0 && game_state->player_first_boosted_cell <= 63)
-    {
-        assert((position.is_fir_mask & (1ULL << game_state->player_first_boosted_cell)) && "Boost must be on top of a card (player_first_boosted_cell)");
-
-        position.is_boosted_mask |= (1ULL << game_state->player_first_boosted_cell);
-    }
-
-    if (game_state->player_second_boosted_cell >= 0 && game_state->player_second_boosted_cell <= 63)
-    {
-        assert((position.is_sec_mask & (1ULL << game_state->player_second_boosted_cell)) && "Boost must be on top of a card (player_second_boosted_cell)");
-
-        position.is_boosted_mask |= (1ULL << game_state->player_second_boosted_cell);
-    }
-
-    if (game_state->player_first_firewalled_cell >= 0 && game_state->player_first_firewalled_cell <= 63)
-    {
-        position.firewall_fir = (game_state->player_first_firewalled_cell << 1) | 1;
-
-        assert(((1ULL << game_state->player_first_firewalled_cell) & (position.is_sec_mask | 1729382256910270488ULL)) == 0 && "Firewall cant be on top of enemy cards or exit squares (player_first_firewalled_cell)");
-    }
-
-    if (game_state->player_second_firewalled_cell >= 0 && game_state->player_second_firewalled_cell <= 63)
-    {
-        position.firewall_sec = (game_state->player_second_firewalled_cell << 1) | 1;
-
-        assert(((1ULL << game_state->player_second_firewalled_cell) & (position.is_fir_mask | 1729382256910270488ULL)) == 0 && "Firewall cant be on top of enemy cards or exit squares (player_second_firewalled_cell)");
-    }
-
-    position.is_swap_available_fir = (game_state->player_first_is_404_not_found_available) ? 1 : 0;
-    position.is_swap_available_sec = (game_state->player_second_is_404_not_found_available) ? 1 : 0;
-
-    assert(game_state->player_first_captured_links_num >= 0 && game_state->player_first_captured_links_num < 4 && "Terminal conditions are not allowed");
-    assert(game_state->player_first_captured_viruses_num >= 0 && game_state->player_first_captured_viruses_num < 4 && "Terminal conditions are not allowed");
-
-    assert(game_state->player_second_captured_links_num >= 0 && game_state->player_second_captured_links_num < 4 && "Terminal conditions are not allowed");
-    assert(game_state->player_second_captured_viruses_num >= 0 && game_state->player_second_captured_viruses_num < 4 && "Terminal conditions are not allowed");
-
-    int total_links_fir = __builtin_popcountll(position.is_fir_mask & position.is_link_mask);
-    int total_links_sec = __builtin_popcountll(position.is_sec_mask & position.is_link_mask);
-
-    int total_viruses_fir = __builtin_popcountll(position.is_fir_mask) - total_links_fir;
-    int total_viruses_sec = __builtin_popcountll(position.is_sec_mask) - total_links_sec;
-
-    assert(total_links_fir + total_links_sec + game_state->player_first_captured_links_num + game_state->player_second_captured_links_num == 8 && "There should be 8 links in total");
-    assert(total_viruses_fir + total_viruses_sec + game_state->player_first_captured_viruses_num + game_state->player_second_captured_viruses_num == 8 && "There should be 8 viruses in total");
-
-    position.fir_link = game_state->player_first_captured_links_num;
-    position.fir_virus = game_state->player_first_captured_viruses_num;
-
-    position.sec_link = game_state->player_second_captured_links_num;
-    position.sec_virus = game_state->player_second_captured_viruses_num;
-
-    return position;
-}
-
-#define CHECK_WIN()                              \
-    if (pos.sec_link == 4)                       \
-    {                                            \
-        __builtin_printf("Player one wins!\n");  \
-        print_field(&pos);                       \
-        break;                                   \
-    }                                            \
-    else if (pos.sec_virus == 4)                 \
-    {                                            \
-        __builtin_printf("Player one loses!\n"); \
-        print_field(&pos);                       \
-        break;                                   \
-    }                                            \
-    else if (pos.fir_link == 4)                  \
-    {                                            \
-        __builtin_printf("Player two wins!\n");  \
-        print_field(&pos);                       \
-        break;                                   \
-    }                                            \
-    else if (pos.fir_virus == 4)                 \
-    {                                            \
-        __builtin_printf("Player one loses!\n"); \
-        print_field(&pos);                       \
-        break;                                   \
-    }
-
-static void simulate_game(generic_representation *init_game_state, bool player_to_move, int analysis_depth)
-{
-    field_t pos = generic_representation_to_intern(init_game_state);
+    field_t pos;
     generic_representation temp_rep;
+    minimax_main_result_t move;
 
+    generic_representation_to_intern(init_game_state, &pos);
     print_field(&pos);
 
     for (;;)
     {
         TIME_TYPE start_it, stop_it;
 
-        __builtin_printf("pos: ");
-        temp_rep = intern_to_generic_representation(&pos);
+        _printf("pos: ");
+        intern_to_generic_representation(&pos, &temp_rep);
         print_generic_representation(&temp_rep);
 
-
         get_time(start_it);
-        minimax_main_result_t move = minimax_iteration_main(analysis_depth, INT64_MAX, MIN, MAX, player_to_move, &pos);
+        minimax_iteration_main(analysis_depth, UINT32_MAX, MIN, MAX, player_to_move, &pos, &move);
         player_to_move = !player_to_move;
         get_time(stop_it);
-        
-        __builtin_printf("Maximized score: %d      %" PRId64 "\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
+
+        _printf("Maximized score: %d      %llu\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
 
         pos = move.best_field;
         print_field(&pos);
-        __builtin_printf("\n");
+        _printf("\n");
 
         CHECK_WIN();
 
-        __builtin_printf("pos: ");
-        temp_rep = intern_to_generic_representation(&pos);
+        _printf("pos: ");
+        intern_to_generic_representation(&pos, &temp_rep);
         print_generic_representation(&temp_rep);
 
         get_time(start_it);
-        move = minimax_iteration_main(analysis_depth, INT64_MAX, MIN, MAX, player_to_move, &pos);
+        minimax_iteration_main(analysis_depth, UINT32_MAX, MIN, MAX, player_to_move, &pos, &move);
         player_to_move = !player_to_move;
         get_time(stop_it);
 
-        __builtin_printf("Minimized score: %d      %" PRId64 "\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
+        _printf("Minimized score: %d      %llu\n", move.evaluation, get_time_diff_millis(stop_it, start_it));
 
         pos = move.best_field;
         print_field(&pos);
-        __builtin_printf("\n");
+        _printf("\n");
 
         CHECK_WIN();
 
 #ifdef BRANCH_DEBUG
         clear_branch_tracker();
-        for (int i = 0; i < _total_branch_count; ++i)
+        for (int32_t i = 0; i < _total_branch_count; ++i)
         {
-            __builtin_printf("branch=%4d (%s), total entries: %" PRId64 ", cutoffs: %" PRId64 ", cutoff%%=%f, recursion_cost=%" PRId64 "\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
+            _printf("branch=%4d (%s), total entries: %llu, cutoffs: %llu, cutoff%%=%f, recursion_cost=%llu\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
         }
 #endif
     }
@@ -271,56 +116,67 @@ static void simulate_game(generic_representation *init_game_state, bool player_t
 
 #undef CHECK_WIN
 
-extern EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player)
+__attribute__((used, visibility("hidden"))) static void rnab_benchmark()
 {
-    field_t position = generic_representation_to_intern(game_state);
-    minimax_main_result_t res = minimax_iteration_main(max_depth, max_search_time, MIN, MAX, player, &position);
-    *game_state = intern_to_generic_representation(&res.best_field);
-    return;
-}
 
-static void rnab_benchmark()
-{
+    // simulate_game(&benchmark_array[0].position, true, 16);
+    // return;
+
 #ifdef BRANCH_DEBUG
     clear_branch_tracker();
 #endif
 
-    TIME_TYPE start, stop;
-    generic_representation temp_field;
-    field_t pos;
+    static TIME_TYPE start, stop;
+    static generic_representation temp_field;
+    static field_t pos;
+    static uint64_t perf_array[10] = {0};
 
     get_time(start);
     for (int i = 0; i < sizeof(benchmark_array) / sizeof(benchmark_array[0]); ++i)
     {
         temp_field = benchmark_array[i].position;
-        pos = generic_representation_to_intern(&temp_field);
+        generic_representation_to_intern(&temp_field, &pos);
         print_field(&pos);
 
-        CLEAR_TT();
-        
-        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, INT64_MAX, 1);
-        pos = generic_representation_to_intern(&temp_field);
+        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, UINT32_MAX, 1);
+        generic_representation_to_intern(&temp_field, &pos);
         print_field(&pos);
 
-        pos = generic_representation_to_intern(&benchmark_array[i].position);
+        // for (int i = 0; i < 10; ++i)
+        //     perf_array[i] = 0;
+        // for (int i = 0; i < TABLE_SIZE * 2; ++i)
+        // {
+        //     if (table[i].depth_preferred.depth != 0 && table[i].depth_preferred.best_section != 255)
+        //         perf_array[table[i].depth_preferred.best_section]++;
+        //     if (table[i].scratch.depth != 0 && table[i].scratch.best_section != 255)
+        //         perf_array[table[i].scratch.best_section]++;
+        // }
+
+        // _printf("best sections: \n");
+        // for (int i = 0; i < 10; ++i)
+        // {
+        //     _printf("%d -> %llu\n", i, perf_array[i]);
+        // }
+        // _printf("\n");
+
+        generic_representation_to_intern(&benchmark_array[i].position, &pos);
         pos = reverse_field(&pos);
         print_field(&pos);
 
-        CLEAR_TT();
-
-        temp_field = intern_to_generic_representation(&pos);
-        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, INT64_MAX, 0);
-        pos = generic_representation_to_intern(&temp_field);
+        intern_to_generic_representation(&pos, &temp_field);
+        rnab_compute_best_move(&temp_field, benchmark_array[i].depth, UINT32_MAX, 0);
+        generic_representation_to_intern(&temp_field, &pos);
         print_field(&pos);
 
 #ifdef BRANCH_DEBUG
-        for (int i = 0; i < _total_branch_count; ++i)
-        {
-            __builtin_printf("branch=%4d (%s), total entries: %" PRId64 ", cutoffs: %" PRId64 ", cutoff%%=%f, recursion_cost=%" PRId64 "\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
-        }
+        // for (int32_t i = 0; i < _total_branch_count; ++i)
+        // {
+        //     _printf("branch=%4d (%s), total entries: %" PRId64 ", cutoffs: %" PRId64 ", cutoff%%=%f, recursion_cost=%" PRId64 "\n", i + 1, cutoff_tracker[i].msg, cutoff_tracker[i].total_entries, cutoff_tracker[i].cutoff_entries, (double)cutoff_tracker[i].cutoff_entries * 100.0 / (double)cutoff_tracker[i].total_entries, cutoff_tracker[i].recursion_cost);
+        // }
         // clear_branch_tracker();
 #endif
     }
     get_time(stop);
-    __builtin_printf("Compute time: %" PRId64 "\n", get_time_diff_millis(stop, start));
+    _printf("Compute time: %llu\n", get_time_diff_millis(stop, start));
 }
+#endif
