@@ -1,14 +1,16 @@
+#define _POSIX_C_SOURCE 200112L
+#include <pthread.h>
 #include "../rnab_engine/rnab.h"
 #include "amalgamation.h"
-#include <pthread.h>
 #include <math.h>
+#include <assert.h>
 
 GLFWwindow *window;
 
 #define M_PI 3.14159265358979323846
 
 #define HIDE_ENEMY_CARDS false
-#define MAX_SEARCH_TIME 5000 // 5 seconds
+#define MAX_SEARCH_TIME 5000u // 5 seconds
 
 field_t pos;
 
@@ -26,7 +28,7 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
 
     render_tex(&game_background_vis, 0, 0, 255, 255, 255, 255, 0);
 
-    for (int i = 0; i < position->fir_virus; ++i)
+    for (int i = 0; i < position->args.fields.fir_virus; ++i)
     {
         if (taken_first_viruses & (1 << i)) // friendly
             render_tex(&virus_enemy, 54 * i, 0, 255, 255, 255, 255, 0);
@@ -34,7 +36,7 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
             render_tex(&virus_ally, 54 * i, 0, 255, 255, 255, 255, 0);
     }
 
-    for (int i = 0; i < position->fir_link; ++i)
+    for (int i = 0; i < position->args.fields.fir_link; ++i)
     {
         if (taken_first_links & (1 << i)) // friendly
             render_tex(&link_enemy, 54 * (i + 4), 0, 255, 255, 255, 255, 0);
@@ -42,7 +44,7 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
             render_tex(&link_ally, 54 * (i + 4), 0, 255, 255, 255, 255, 0);
     }
 
-    for (int i = 0; i < position->sec_virus; ++i)
+    for (int i = 0; i < position->args.fields.sec_virus; ++i)
     {
         if (taken_second_viruses & (1 << i)) // friendly
             render_tex(&virus_ally, 54 * i, 54 * 11, 255, 255, 255, 255, 0);
@@ -50,7 +52,7 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
             render_tex(&virus_enemy, 54 * i, 54 * 11, 255, 255, 255, 255, 0);
     }
 
-    for (int i = 0; i < position->sec_link; ++i)
+    for (int i = 0; i < position->args.fields.sec_link; ++i)
     {
         if (taken_second_links & (1 << i)) // friendly
             render_tex(&link_ally, 54 * (i + 4), 54 * 11, 255, 255, 255, 255, 0);
@@ -64,10 +66,10 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
     if (is_boost_available_sec)
         render_tex(&boost_ally, 54 * 6, 54 * 10, 255, 255, 255, 255, 0);
 
-    if (position->is_swap_available_fir)
+    if (position->args.fields.is_swap_available_fir)
         render_tex(&not_found_enemy, 54 * 2, 54 * 1, 255, 255, 255, 255, 0);
 
-    if (position->is_swap_available_sec)
+    if (position->args.fields.is_swap_available_sec)
         render_tex(&not_found_ally, 54 * 2, 54 * 10, 255, 255, 255, 255, 0);
 
     if (is_checker_available_fir)
@@ -232,22 +234,22 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
 
     // render with enemy color for clarity
 
-    if (position->firewall_fir == 0)
+    if (position->args.fields.firewall_fir == 0)
     {
         render_tex(&firewall_enemy, 54 * 5, 54 * 1, 255, 255, 255, 255, 0);
     }
     else
     {
-        render_tex(&firewall_vis_ally, (7 - (int)((position->firewall_fir >> 1) & 7)) * 54, (9 - (int)((position->firewall_fir >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_ally, (7 - (int)((position->args.fields.firewall_fir >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_fir >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 
-    if (position->firewall_sec == 0)
+    if (position->args.fields.firewall_sec == 0)
     {
         render_tex(&firewall_ally, 54 * 5, 54 * 10, 255, 255, 255, 255, 0);
     }
     else
     {
-        render_tex(&firewall_vis_enemy, (7 - (int)((position->firewall_sec >> 1) & 7)) * 54, (9 - (int)((position->firewall_sec >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_enemy, (7 - (int)((position->args.fields.firewall_sec >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_sec >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 }
 
@@ -478,8 +480,8 @@ void decrease_diff(struct button_t *self)
 void increase_diff(struct button_t *self)
 {
     ++ai_level;
-    if (ai_level > 16)
-        ai_level = 16;
+    if (ai_level > 40)
+        ai_level = 40;
 }
 
 void add_card_controls();
@@ -520,17 +522,15 @@ void decal_move_callback(struct button_t *self)
 
         if (pos.is_link_mask & move_dest)
         {
-            ++pos.sec_link;
+            ++pos.args.fields.sec_link;
             pos.is_link_mask &= ~move_dest;
             pos.is_fir_mask &= ~move_dest;
         }
         else
         {
-            ++pos.sec_virus;
+            ++pos.args.fields.sec_virus;
             pos.is_fir_mask &= ~move_dest;
         }
-
-        pos.forward_adv_fir -= 7 - (__builtin_ctzll(move_dest) >> 3);
 
         if (pos.is_boosted_mask & move_dest)
         {
@@ -543,9 +543,6 @@ void decal_move_callback(struct button_t *self)
     if (pos.is_link_mask & interacting_card)
         pos.is_link_mask ^= (interacting_card | move_dest);
     pos.is_sec_mask ^= (interacting_card | move_dest);
-
-    pos.forward_adv_sec -= __builtin_ctzll(interacting_card) >> 3;
-    pos.forward_adv_sec += __builtin_ctzll(move_dest) >> 3;
 
     for (int i = 0; i < decals_size; ++i)
         decals[i]->on_click = NULL;
@@ -581,13 +578,13 @@ void decal_depo_callback(struct button_t *self)
 
     if (pos.is_link_mask & interacting_card)
     {
-        taken_second_links |= (1 << pos.sec_link);
-        ++pos.sec_link;
+        taken_second_links |= (1 << pos.args.fields.sec_link);
+        ++pos.args.fields.sec_link;
     }
     else // deposit a virus huh
     {
-        taken_second_viruses |= (1 << pos.sec_virus);
-        ++pos.sec_virus;
+        taken_second_viruses |= (1 << pos.args.fields.sec_virus);
+        ++pos.args.fields.sec_virus;
     }
 
     if (pos.is_boosted_mask & interacting_card)
@@ -595,8 +592,6 @@ void decal_depo_callback(struct button_t *self)
     if (pos.is_link_mask & interacting_card)
         pos.is_link_mask ^= interacting_card;
     pos.is_sec_mask ^= interacting_card;
-
-    pos.forward_adv_sec -= __builtin_ctzll(interacting_card) >> 3;
 
     for (int i = 0; i < decals_size; ++i)
         decals[i]->on_click = NULL;
@@ -662,7 +657,7 @@ void card_move_p1(struct button_t *self)
 
     debug_printf("clicked on card at x=%d y=%d\n", piece_x, piece_y);
 
-    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.firewall_fir & 1) << (pos.firewall_fir >> 1));
+    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.args.fields.firewall_fir & 1) << (pos.args.fields.firewall_fir >> 1));
     const uint64_t all_cards_mask = pos.is_sec_mask | pos.is_fir_mask | enemy_firewall_mask;
     const uint64_t unmoveable_mask = pos.is_sec_mask | enemy_firewall_mask;
 
@@ -859,7 +854,7 @@ void perform_swap(struct button_t *self)
 
     last_time_appear = current_time;
 
-    pos.is_swap_available_sec = 0;
+    pos.args.fields.is_swap_available_sec = 0;
 
     old_state = pos;
 
@@ -897,7 +892,7 @@ void perform_fake_swap(struct button_t *self)
     const uint64_t fir_piece_mask = 1ULL << ((7 - (decals[0]->x / 54)) + 8 * (9 - (decals[0]->y / 54)));
     const uint64_t sec_piece_mask = 1ULL << ((7 - (decals[1]->x / 54)) + 8 * (9 - (decals[1]->y / 54)));
 
-    pos.is_swap_available_sec = 0;
+    pos.args.fields.is_swap_available_sec = 0;
 
     decals[0]->on_click = NULL;
     decals[1]->on_click = NULL;
@@ -1143,7 +1138,7 @@ void place_firewall(struct button_t *self)
 
     const int firewall_pos = ((7 - (self->x / 54)) + 8 * (9 - (self->y / 54)));
 
-    pos.firewall_sec = (firewall_pos << 1) | 1;
+    pos.args.fields.firewall_sec = (firewall_pos << 1) | 1;
 
     for (int i = 0; i < decals_size; ++i)
         decals[i]->on_click = NULL;
@@ -1168,7 +1163,7 @@ void firewall_p1(struct button_t *self)
         controls[i]->on_click = NULL;
     surface->on_click = cancel_firewall;
 
-    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.firewall_fir & 1) << (pos.firewall_fir >> 1));
+    const uint64_t enemy_firewall_mask = ((uint64_t)(pos.args.fields.firewall_fir & 1) << (pos.args.fields.firewall_fir >> 1));
     const uint64_t unmoveable_mask = pos.is_fir_mask | enemy_firewall_mask; // apparently you can place firewall on top of your cards so dont include 'pos.is_sec_mask'
 
     for (int i = 0; i < 64; ++i)
@@ -1211,7 +1206,7 @@ void perform_unfirewall(struct button_t *self)
     controls[4]->on_click = NULL;
     surface->on_click = NULL;
 
-    pos.firewall_sec = 0;
+    pos.args.fields.firewall_sec = 0;
 
     state = GAME_STATE_AI_IDLE;
 
@@ -1230,8 +1225,8 @@ void unfirewall_p1(struct button_t *self)
         controls[i]->on_click = NULL;
     surface->on_click = cancel_unfirewall;
 
-    controls[4]->x = ((7 - (int)((pos.firewall_sec >> 1) & 7)) * 54);
-    controls[4]->y = ((9 - (int)((pos.firewall_sec >> 1) >> 3)) * 54);
+    controls[4]->x = ((7 - (int)((pos.args.fields.firewall_sec >> 1) & 7)) * 54);
+    controls[4]->y = ((9 - (int)((pos.args.fields.firewall_sec >> 1) >> 3)) * 54);
     controls[4]->on_click = perform_unfirewall;
 }
 
@@ -1247,9 +1242,9 @@ void add_card_controls()
 
     if (is_checker_available_sec)
         controls[0]->on_click = checker_p1;
-    if (pos.is_swap_available_sec)
+    if (pos.args.fields.is_swap_available_sec)
         controls[1]->on_click = swap_p1;
-    if (pos.firewall_sec == 0)
+    if (pos.args.fields.firewall_sec == 0)
         controls[2]->on_click = firewall_p1;
     else
         controls[2]->on_click = unfirewall_p1;
@@ -1280,11 +1275,12 @@ void *ai_move_thread(void *args)
 {
 #ifdef RNAB_DEBUG
     debug_printf("pos: ");
-    generic_representation temp_rep = intern_to_generic_representation(&pos);
+    generic_representation temp_rep;
+    intern_to_generic_representation(&pos, &temp_rep);
     print_generic_representation(&temp_rep);
 #endif
-
-    minimax_main_result_t move = minimax_iteration_main(ai_level, MAX_SEARCH_TIME, MIN, MAX, true, &pos);
+    minimax_main_result_t move;
+    minimax_iteration_main(ai_level, MAX_SEARCH_TIME, MIN, MAX, true, &pos, &move);
 
     pthread_mutex_lock(&ai_move_mtx);
 
@@ -1309,26 +1305,26 @@ void *ai_move_thread(void *args)
     sec_texture_ptr = card_to_texture(move_dest, &pos, false);
 
     // now the actual fuckery
-    if (pos.firewall_fir != new_field.firewall_fir) // ai swapped a card
+    if (pos.args.fields.firewall_fir != new_field.args.fields.firewall_fir) // ai swapped a card
     {
-        if (pos.firewall_fir == 0) // place
+        if (pos.args.fields.firewall_fir == 0) // place
         {
             state = GAME_STATE_AI_FIREWALL;
 
-            interacting_card = 1ULL << (new_field.firewall_fir >> 1);
+            interacting_card = 1ULL << (new_field.args.fields.firewall_fir >> 1);
         }
         else // remove
         {
             state = GAME_STATE_AI_UNFIREWALL;
 
-            interacting_card = 1ULL << (pos.firewall_fir >> 1);
+            interacting_card = 1ULL << (pos.args.fields.firewall_fir >> 1);
         }
     }
-    else if (pos.is_swap_available_fir != new_field.is_swap_available_fir) // ai swapped a card
+    else if (pos.args.fields.is_swap_available_fir != new_field.args.fields.is_swap_available_fir) // ai swapped a card
     {
         state = GAME_STATE_AI_SWAP;
 
-        old_state.is_swap_available_fir = 0;
+        old_state.args.fields.is_swap_available_fir = 0;
 
         moved_card = (fir_link_mask ^ new_fir_link_mask) & (~new_fir_link_mask);
         interacting_card = (fir_link_mask ^ new_fir_link_mask) & (~fir_link_mask);
@@ -1395,7 +1391,7 @@ void *ai_move_thread(void *args)
             moved_card = moved_card_pos;
             interacting_card = move_dest;
 
-            taken_first_links |= (1 << pos.fir_link);
+            taken_first_links |= (1 << pos.args.fields.fir_link);
 
             if (is_checker_available_sec == 0 && moved_card_pos == enemy_reveal_mask)
             {
@@ -1450,7 +1446,7 @@ void *ai_move_thread(void *args)
                 sec_texture_ptr = &virus_ally;
             }
 
-            taken_first_viruses |= (1 << pos.fir_virus);
+            taken_first_viruses |= (1 << pos.args.fields.fir_virus);
 
             if (is_checker_available_sec == 0 && moved_card_pos == enemy_reveal_mask)
             {
@@ -1540,7 +1536,7 @@ void place_card(struct button_t *self)
 
     if (player_field_place_id == 8)
     {
-        pos = init_field(indexes[rand() % 70], player_field_id);
+        init_field(&pos, indexes[rand() % 70], player_field_id);
         // field_construct(pos, indexes[15], player_field_id);
 
         state = (is_ai_turn) ? GAME_STATE_AI_IDLE : GAME_STATE_PLAYER_IDLE;
@@ -1570,17 +1566,14 @@ void begin_game(struct button_t *self)
 
     memset(&pos, 0, sizeof(field_t));
 
-    pos.forward_adv_fir = 2;
-    pos.forward_adv_sec = 2;
-
     is_checker_available_fir = 1;
     is_checker_available_sec = 1;
 
-    pos.is_swap_available_fir = 1;
-    pos.is_swap_available_sec = 1;
+    pos.args.fields.is_swap_available_fir = 1;
+    pos.args.fields.is_swap_available_sec = 1;
 
-    pos.firewall_fir = 0;
-    pos.firewall_sec = 0;
+    pos.args.fields.firewall_fir = 0;
+    pos.args.fields.firewall_sec = 0;
 
     enemy_reveal_mask = 0;
     ally_reveal_mask = 0;
@@ -1833,7 +1826,7 @@ int main()
             else
             {
                 const int sec_piece_pos = __builtin_ctzll(moved_card);
-                const int tray_pos = (old_state.sec_link < pos.sec_link) ? ((int)old_state.sec_link * 54 + 4 * 54) : ((int)old_state.sec_virus * 54);
+                const int tray_pos = (old_state.args.fields.sec_link < pos.args.fields.sec_link) ? ((int)old_state.args.fields.sec_link * 54 + 4 * 54) : ((int)old_state.args.fields.sec_virus * 54);
 
                 float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
                 if (progress > 1.0f)
@@ -1842,7 +1835,7 @@ int main()
                 float eased = 2.0f * progress - progress * progress;
 
                 render_tex_scale(texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                render_tex_scale(((old_state.sec_link < pos.sec_link) ? (&link_enemy) : (&virus_enemy)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(11 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+                render_tex_scale(((old_state.args.fields.sec_link < pos.args.fields.sec_link) ? (&link_enemy) : (&virus_enemy)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(11 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
                 {
                     render_tex_scale(&boost_enemy, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -1855,11 +1848,11 @@ int main()
                     if (is_boost_available_fir == false && (pos.is_fir_mask & pos.is_boosted_mask) == 0)
                         is_boost_available_fir = true;
 
-                    if (pos.sec_link == 4)
+                    if (pos.args.fields.sec_link == 4)
                     {
                         state = GAME_STATE_PLAYER_WIN;
                     }
-                    else if (pos.sec_virus == 4)
+                    else if (pos.args.fields.sec_virus == 4)
                     {
                         state = GAME_STATE_PLAYER_LOSE;
                     }
@@ -2117,7 +2110,7 @@ int main()
             else
             {
                 const int sec_piece_pos = __builtin_ctzll(interacting_card);
-                const int tray_pos = (old_state.fir_link < pos.fir_link) ? ((int)old_state.fir_link * 54 + 4 * 54) : ((int)old_state.fir_virus * 54);
+                const int tray_pos = (old_state.args.fields.fir_link < pos.args.fields.fir_link) ? ((int)old_state.args.fields.fir_link * 54 + 4 * 54) : ((int)old_state.args.fields.fir_virus * 54);
 
                 float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
                 if (progress > 1.0f)
@@ -2126,7 +2119,7 @@ int main()
                 float eased = 2.0f * progress - progress * progress;
 
                 render_tex_scale(texture_ptr, (float)((7 - (sec_piece_pos & 7)) * 54) + (1.0f - eased) * 27.0f, (float)((9 - (sec_piece_pos >> 3)) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
-                render_tex_scale(((old_state.fir_link < pos.fir_link) ? (&link_ally) : (&virus_ally)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(0) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+                render_tex_scale(((old_state.args.fields.fir_link < pos.args.fields.fir_link) ? (&link_ally) : (&virus_ally)), (float)(tray_pos) + (1.0f - eased) * 27.0f, (float)(0) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
                 if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
                 {
                     render_tex_scale(&boost_ally, (float)(6 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
@@ -2139,11 +2132,11 @@ int main()
                     if (is_boost_available_sec == false && (pos.is_sec_mask & pos.is_boosted_mask) == 0)
                         is_boost_available_sec = true;
 
-                    if (pos.fir_link == 4)
+                    if (pos.args.fields.fir_link == 4)
                     {
                         state = GAME_STATE_PLAYER_LOSE;
                     }
-                    else if (pos.fir_virus == 4)
+                    else if (pos.args.fields.fir_virus == 4)
                     {
                         state = GAME_STATE_PLAYER_WIN;
                     }
@@ -2191,7 +2184,7 @@ int main()
             }
             else
             {
-                const int tray_pos = (old_state.sec_link < pos.sec_link) ? ((int)old_state.sec_link * 54 + 4 * 54) : ((int)old_state.sec_virus * 54);
+                const int tray_pos = (old_state.args.fields.sec_link < pos.args.fields.sec_link) ? ((int)old_state.args.fields.sec_link * 54 + 4 * 54) : ((int)old_state.args.fields.sec_virus * 54);
 
                 {
                     float progress = (float)(current_time - last_time_appear - 1500000) / (float)(500000);
@@ -2224,11 +2217,11 @@ int main()
 
                     last_time_appear = current_time;
 
-                    if (pos.sec_link == 4)
+                    if (pos.args.fields.sec_link == 4)
                     {
                         state = GAME_STATE_PLAYER_WIN;
                     }
-                    else if (pos.sec_virus == 4)
+                    else if (pos.args.fields.sec_virus == 4)
                     {
                         state = GAME_STATE_PLAYER_LOSE;
                     }
@@ -2275,7 +2268,7 @@ int main()
             }
             else
             {
-                const int tray_pos = (old_state.fir_link < pos.fir_link) ? ((int)old_state.fir_link * 54 + 4 * 54) : ((int)old_state.fir_virus * 54);
+                const int tray_pos = (old_state.args.fields.fir_link < pos.args.fields.fir_link) ? ((int)old_state.args.fields.fir_link * 54 + 4 * 54) : ((int)old_state.args.fields.fir_virus * 54);
 
                 {
                     float progress = (float)(current_time - last_time_appear - 1500000) / (float)(500000);
@@ -2308,11 +2301,11 @@ int main()
 
                     last_time_appear = current_time;
 
-                    if (pos.fir_link == 4)
+                    if (pos.args.fields.fir_link == 4)
                     {
                         state = GAME_STATE_PLAYER_LOSE;
                     }
-                    else if (pos.fir_virus == 4)
+                    else if (pos.args.fields.fir_virus == 4)
                     {
                         state = GAME_STATE_PLAYER_WIN;
                     }
@@ -2510,7 +2503,7 @@ int main()
 
             uint8_t blend_alpha = (uint8_t)(191.0f + 64.0f * cosf(M_PI * 2.0f * ((current_time - last_time_appear) / 1000000.0f)));
 
-            const int card_pos = pos.firewall_sec >> 1;
+            const int card_pos = pos.args.fields.firewall_sec >> 1;
 
             render_tex(&firewall_ally, (7 - (card_pos & 7)) * 54, (9 - (card_pos >> 3)) * 54, blend_alpha, blend_alpha, blend_alpha, 255, 0);
 
