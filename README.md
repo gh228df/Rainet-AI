@@ -21,28 +21,26 @@ This project can be compiled into a standalone library with a simple interface (
 
 ## Current Limitations
 
-This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. Here's what it's currently not great at:
+This AI is already pretty capable, but the game is surprisingly deep and computationally expensive. 
 
-- **Firewall** and **404-Not-Found (swap)** power-ups  
+The main problem is that unlike chess which has a similar complexity, pieces in this game are very slow and it takes 8-10 moves just to reach the opponent. Attack range is also very limited which makes it way harder to prune bad moves as the position remains surprisingly stable.
+
+Here's what it's currently not great at:
+
+- **Firewall** power-up 
   Firewall is only ever applied to cover **Link cards** or a **Boosted Virus** right now.
 
 - **Revealed / covered card knowledge**  
   The engine doesn't yet factor in which cards have been revealed or are known to be covered.
 
-- **Full board position setup**  
-  A real game position can have up to ~70 possible card combinations per side. Enumerating everything is brutally slow, so analysis times can get long.
-
-- **Exponential complexity**  
-  Like most perfect-information games, deeper search = dramatically more computation.
-
 **Targeted Analyzing Depth**
 ---------------------------
 
-You can set the search depth anywhere from **6** to **16** plies.  
-Deeper = stronger play, but also much more memory usage (thanks to caching/transposition tables).
+You can set the search depth anywhere from **4** to **30** plies.  
+Deeper = stronger play, but also much more nodes explored.
 
 **Sweet spot for most machines:** **10–14**  
-Anything beyond 14 usually requires serious patience.
+Anything beyond 14 usually requires serious patience, though with the time limit you can set any depth target up to 30.
 
 **Position Representation**
 -------------------------
@@ -50,38 +48,44 @@ Anything beyond 14 usually requires serious patience.
 Everything lives inside a compact `field_t` struct:
 
 ```
-struct field_t
+typedef union
 {
-    uint64_t is_fir_mask; // first player cards mask
-    uint64_t is_sec_mask; // second player cards mask
-    uint64_t is_link_mask; // link cards mask
-    uint64_t is_boosted_mask; // boosted cards mask
+    uint64_t raw;                    // hack to manipulate raw memory
+    struct
+    {
+        // location for the firewalls (mask is computed as 1ULL << firewall_var)
+        uint8_t firewall_fir;
+        uint8_t firewall_sec;
 
-    uint8_t forward_adv_fir; // card advancement for the first player
-    uint8_t forward_adv_sec; // card advancement for the second player
+        uint8_t fir_link;            // captured links by the first player
+        uint8_t sec_link;            // captured viruses by the first player
+        uint8_t fir_virus;           // captured links by the second player
+        uint8_t sec_virus;           // captured viruses by the second player
 
-    // location for the firewalls (mask is computed as 1ULL << firewall_var)
-    uint8_t firewall_fir; 
-    uint8_t firewall_sec;
+        bool is_swap_available_fir;  // flag to track swap availability for the first player
+        bool is_swap_available_sec;  // flag to track swap availability for the second player
+    } fields;
+} extra_args_t;
 
-    uint8_t fir_link : 4; // captured links by the first player
-    uint8_t sec_link : 4; // captured viruses by the first player
-    uint8_t fir_virus : 4; // captured links by the second player
-    uint8_t sec_virus : 4; // captured viruses by the second player
+typedef struct
+{
+    uint64_t is_fir_mask;      // first player cards mask
+    uint64_t is_sec_mask;      // second player cards mask
+    uint64_t is_link_mask;     // link cards mask
+    uint64_t is_boosted_mask;  // boosted cards mask
 
-    uint8_t is_swap_available_fir; // flag to track swap availability for the first player
-    uint8_t is_swap_available_sec; // flag to track swap availability for the second player
-}
+    extra_args_t args;
+} field_t;
 ```
 
-We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations quickly.
+We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations quickly, though preferring __builtin_clzll when possible.
 
 **Position Evaluation**
 ---------------------
 
 This is the heart of the AI, it decides what "good" looks like. Current version:
 
-1024 * 2<sup>captured_links_player_one</sup> - 512 * 2<sup>captured_viruses_player_one</sup> - 1024 * 2<sup>captured_links_player_two</sup> + 512 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 2048 * is_swap_available_player_one - 2048 * is_swap_available_player_two
+128 * 2<sup>captured_links_player_one</sup> - 64 * 2<sup>captured_viruses_player_one</sup> - 128 * 2<sup>captured_links_player_two</sup> + 64 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 256 * is_swap_available_player_one - 256 * is_swap_available_player_two
 
 **Player One** (fir) maximizes the score  
 **Player Two** (sec) minimizes it
@@ -94,21 +98,13 @@ This is the heart of the AI, it decides what "good" looks like. Current version:
 
 This evaluation function can be improved upon, and suggestions are welcome.
 
-**Search Implementations**
----------------------
-In rnab.hpp you'll find two minimax variants:
-
-- **minimax_iteration_main** — iterates up to a certain point, gathering move information and scores until the time runs out (the one currently used)
-- **minimax_main** — classic single-threaded version
-
 **Future Development**
 ---------------------
 
 * Better move ordering & pruning to reach deeper searches (it looks like the biggest bottleneck is the evaluation function which doesn't generate many cutoffs)
-* Smarter caching / lower memory usage
 * Proper handling of revealed cards and partial knowledge
 * A much nicer frontend / GUI (the current one is very bare-bones)
-* Implementing more advanced minimax tricks (iterative deepening refinements, etc.)
+* Implementing more advanced minimax tricks (SEE, Killer Moves, etc...)
 
 **Contribution**
 ---------------------
