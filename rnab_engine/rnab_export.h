@@ -25,4 +25,4 @@ typedef struct
     int32_t player_second_is_404_not_found_available;
 } generic_representation;
 
-EXPORT_API void rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, int64_t max_search_time, int32_t player);
+EXPORT_API int32_t rnab_compute_best_move(generic_representation *game_state, int32_t max_depth, uint32_t max_search_time, int32_t player);
