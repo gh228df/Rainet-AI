@@ -13,6 +13,9 @@ This project is written in **C** and relies on the following external libraries:
 - **rapidhash**  
   Provides a high quality hash at a good speed.
 
+- **stb_sprintf**  
+  Provides the _printf interface.
+
 Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)
 
 ## Integration
@@ -86,6 +89,9 @@ We lean heavily on __builtin_ctzll / __builtin_clzll to extract piece locations 
 This is the heart of the AI, it decides what "good" looks like. Current version:
 
 128 * 2<sup>captured_links_player_one</sup> - 64 * 2<sup>captured_viruses_player_one</sup> - 128 * 2<sup>captured_links_player_two</sup> + 64 * 2<sup>captured_viruses_player_two</sup> + player_one_total_advancement - player_two_total_advancement + 256 * is_swap_available_player_one - 256 * is_swap_available_player_two
+
+Terminal conditions are triggered if either of the players wins the game by getting 4 links, which sets evaluation to (24576 + depth) / (-24576 - depth). 
+The formula above cannot produce values beyond ~4096 so 16384 is selected as a safe flag to indicate a win.
 
 **Player One** (fir) maximizes the score  
 **Player Two** (sec) minimizes it
