@@ -49,7 +49,7 @@ struct generic_representation {
     generic_representation state = {0};  // zero-initialize
     // ...
     state.player_second_card_mask = (1ULL << 2) | (1ULL << 11) | (1ULL << 12);
-    state.link_card_mask = (1ULL << 2) | (1ULL << 11) | (1ULL << 12); // dont forget about setting the link mask
+    state.link_card_mask = (1ULL << 2) | (1ULL << 11) | (1ULL << 12); // dont forget to set the link mask
     // ...
 
 ### Power-ups & Boosts
@@ -68,29 +68,46 @@ struct generic_representation {
 
 ## Computing the Best Move
 
-    void rnab_compute_best_move(
+    int32_t rnab_compute_best_move(
         generic_representation *game_state
         int32_t                 max_depth,
-        int64_t                 max_search_time,
+        uint32_t                max_search_time,
         int32_t                 player
     );
 
 ### Parameters
 
 - `game_state`  
-  Pointer to a filled `generic_representation` struct
+  Pointer to a filled `generic_representation` struct. <br>
   After computing the best move, the output will be written back to the 'game_state'
 
 - `max_depth`  
   Maximum minimax depth.  
-  • Must be ≥ 2  
+  • Must be ≥ 4  
   • Must be **even** (4, 6, 8, …)
 
 - `max_search_time` (milliseconds)  
-  Time budget for search. Actual time may slightly exceed this value.
+  Time budget for search. Actual time may slightly exceed this value. Pass UINT32_MAX to disable limit.
 
 - `player`  
   • `0` = first player to move  
   • `1` = second player to move
 
-> **Important:** The function includes several runtime assertions that validate input to follow game rules, do not disable those unless you're 100% sure you generate reliable data.
+### Error codes
+
+The search function returns the following error codes:
+
+| Error Code | Description |
+|------------|-------------|
+| `0`        | Success, no error occurred. |
+| `1`        | Invalid search parameters. `max_depth` must be at least 4 and even (divisible by 2). `max_search_time` must be at least 100 milliseconds. |
+| `2`        | Invalid `player_first_boosted_cell`. Value must be `-1` or in the range `[0, 63]`. |
+| `3`        | Invalid `player_second_boosted_cell`. Value must be `-1` or in the range `[0, 63]`. |
+| `4`        | Invalid `player_first_firewalled_cell`. Value must be `-1` or in the range `[0, 63]`. |
+| `5`        | Invalid `player_second_firewalled_cell`. Value must be `-1` or in the range `[0, 63]`. |
+| `6`        | Overlapping player cards. A cell cannot contain both player 1 and player 2 cards (`player_first_card_mask & player_second_card_mask != 0`). |
+| `7`        | Invalid boost placement for player 1. The boost must be placed on top of a player 1 card. |
+| `8`        | Invalid boost placement for player 2. The boost must be placed on top of a player 2 card. |
+| `9`        | Invalid firewall placement for player 1. Firewall cannot be placed on a player 2 card or on an exit square. |
+| `10`       | Invalid firewall placement for player 2. Firewall cannot be placed on a player 1 card or on an exit square. |
+| `11`       | Invalid captured pieces count. Captured links or viruses for either player must be in the range `[0, 3]`. |
