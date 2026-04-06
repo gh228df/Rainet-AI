@@ -9,7 +9,6 @@ set(CMAKE_C_EXTENSIONS OFF)
 # ─────────────────────────────────────────────
 
 option(RNAB_DEBUG       "Enable debug logging"                          OFF)
-option(RNAB_BENCHMARK   "Include benchmark entry point"                 OFF)
 option(ENABLE_STRIP     "Strip symbols from binary"                     ON)
 option(BUILD_LIBRARY    "Build as shared library instead of executable" OFF)
 
@@ -46,7 +45,6 @@ target_include_directories(rnab PRIVATE rnab_engine)
 target_compile_definitions(rnab PRIVATE
     TABLE_SIZE=${TABLE_SIZE}
     $<$<BOOL:${RNAB_DEBUG}>:RNAB_DEBUG>
-    $<$<BOOL:${RNAB_BENCHMARK}>:RNAB_BENCHMARK>
 )
 
 # ─────────────────────────────────────────────
@@ -221,6 +219,5 @@ message(STATUS "Compiler:     ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}
 message(STATUS "Platform:     ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "Library:      ${BUILD_LIBRARY}")
 message(STATUS "Debug:        ${RNAB_DEBUG}")
-message(STATUS "Benchmark:    ${RNAB_BENCHMARK}")
 message(STATUS "Strip:        ${ENABLE_STRIP}")
 message(STATUS "TABLE_SIZE:   ${TABLE_SIZE}  (2^${TABLE_BITS})")
