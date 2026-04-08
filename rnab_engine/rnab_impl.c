@@ -6,8 +6,17 @@
 #include <windows.h>
 #endif
 
+#define RNAB_MT
+
 #include <stdarg.h>
 #include <stddef.h>
+
+#ifndef STACK_SIZE
+#define STACK_SIZE (128 * 1024)
+#endif
+#ifndef MAX_THREADS
+#define MAX_THREADS 64
+#endif
 
 #include "syscalls.c"
 
@@ -4660,85 +4669,81 @@ END_BRANCH_TRACKING();
 
 typedef struct
 {
-    int32_t move_id;
-    int32_t move_eval;
+    int16_t move_eval;
+    uint8_t move_id;
     bool is_exact; // false = upper bound from failed null-window
 } move_scores_wrapper;
 
+STATIC_BSS move_scores_wrapper move_scores[MAX_MOVES] __attribute__((aligned(64)));
 STATIC_BSS field_t possible_moves_buf[MAX_MOVES];
 STATIC_BSS int32_t possible_moves_buf_moves_count;
 
-static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_search_time, int32_t alpha, int32_t beta, const bool player, const field_t *__restrict__ position, minimax_main_result_t *__restrict__ ret)
+static void minimax_iteration_main_st_max(const int32_t max_depth, minimax_main_result_t *__restrict__ ret)
 {
-    STATIC_BSS move_scores_wrapper move_scores[MAX_MOVES];
+    RNAB_ASSUME(possible_moves_buf_moves_count > 0);
+
     STATIC_BSS TIME_TYPE start, start_it, stop, global_start;
     STATIC_BSS field_t *best_field;
     STATIC_BSS field_t *pos;
-
-    CLEAR_TT();
-
-    start_search_timer(max_search_time);
 
     debug_printf("minimax_iteration_main entry\n");
 
     debug_get_time(global_start);
 
-    if (player)
-    {
-        possible_moves_max(position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask, position->args, possible_moves_buf, &possible_moves_buf_moves_count);
-        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-            if (possible_moves_buf[i].args.fields.fir_link > 3)
-            {
-                *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = 24576 + max_depth};
-                return;
-            }
-
-        int32_t prev_alpha = alpha;
-
-        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-            move_scores[i] = (move_scores_wrapper){i, MIN, false};
-
-        for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+        if (possible_moves_buf[i].args.fields.fir_link > 3)
         {
-            int32_t best_move_idx = -1;
+            *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = 24576 + max_depth};
+            return;
+        }
 
-            uint64_t cur_rec_count = rec_counter;
-            debug_get_time(start);
+    int32_t prev_alpha = MIN;
 
-            if (current_depth > 4)
+    for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    {
+        int32_t best_move_idx = -1;
+
+        uint64_t cur_rec_count = rec_counter;
+        debug_get_time(start);
+
+        if (current_depth > 4)
+        {
+            for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
             {
-                for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
+                move_scores_wrapper key = move_scores[i];
+                int32_t j = i - 1;
+                while (j >= 0)
                 {
-                    move_scores_wrapper key = move_scores[i];
-                    int32_t j = i - 1;
-                    while (j >= 0)
+                    move_scores_wrapper *prev = &move_scores[j];
+                    if (prev->move_eval > key.move_eval)
+                        break;
+                    if (prev->move_eval == key.move_eval)
                     {
-                        move_scores_wrapper *prev = &move_scores[j];
-                        if (prev->move_eval > key.move_eval)
-                            break;
-                        if (prev->move_eval == key.move_eval)
-                        {
-                            if (prev->is_exact && !key.is_exact)
-                                break; // exact always wins over non-exact
-                            if (prev->is_exact == key.is_exact &&
-                                prev->move_id <= key.move_id)
-                                break; // stable by move_id only among equals
-                        }
-                        move_scores[j + 1] = *prev;
-                        --j;
+                        if (prev->is_exact && !key.is_exact)
+                            break; // exact always wins over non-exact
+                        if (prev->is_exact == key.is_exact &&
+                            prev->move_id <= key.move_id)
+                            break; // stable by move_id only among equals
                     }
-                    move_scores[j + 1] = key;
+                    move_scores[j + 1] = *prev;
+                    --j;
                 }
+                move_scores[j + 1] = key;
             }
+        }
 
-            int32_t iteration_alpha = prev_alpha - 5;
-            int32_t iteration_beta = (current_depth == 4) ? MAX : (prev_alpha + 5);
+        int32_t iteration_alpha = prev_alpha - 5;
+        int32_t iteration_beta = (current_depth == 4) ? MAX : (prev_alpha + 5);
 
-            debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+        debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
 
-            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+        do
+        {
+            move_scores_wrapper *__restrict__ move_ptr = move_scores;
+
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i, ++move_ptr)
             {
-                int32_t move_idx = move_scores[i].move_id;
+                int32_t move_idx = move_ptr->move_id;
                 pos = &possible_moves_buf[move_idx];
 
                 debug_get_time(start_it);
@@ -4749,7 +4754,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                     debug_get_time(stop);
 
-                    move_scores[i].is_exact = true;
+                    move_ptr->is_exact = true;
 
                     // debug_printf(FG_BLUE "[f %d: %d -> %d : %lld] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                 }
@@ -4765,13 +4770,13 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                         debug_get_time(stop);
 
-                        move_scores[i].is_exact = true;
+                        move_ptr->is_exact = true;
 
                         // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                     }
                     else
                     {
-                        move_scores[i].is_exact = false;
+                        move_ptr->is_exact = false;
                     }
                 }
 
@@ -4793,7 +4798,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     return;
                 }
 
-                move_scores[i].move_eval = childres;
+                move_ptr->move_eval = childres;
 
                 if (childres > iteration_alpha)
                 {
@@ -4808,23 +4813,28 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     break;
                 }
             }
+        } while (0);
 
-            bool guessed_incorrectly = (iteration_alpha <= prev_alpha - 5) || (iteration_alpha >= iteration_beta);
+        bool guessed_incorrectly = (iteration_alpha <= prev_alpha - 5) || (iteration_alpha >= iteration_beta);
 
-            iteration_beta = (iteration_alpha >= iteration_beta) ? MAX : iteration_beta;
-            iteration_alpha = (iteration_alpha <= prev_alpha - 5) ? MIN : iteration_alpha;
+        iteration_beta = (iteration_alpha >= iteration_beta) ? MAX : iteration_beta;
+        iteration_alpha = (iteration_alpha <= prev_alpha - 5) ? MIN : iteration_alpha;
 
-            if (guessed_incorrectly)
+        if (guessed_incorrectly)
+        {
+            debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+            best_move_idx = -1;
+
+            do
             {
-                debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+                move_scores_wrapper *__restrict__ move_ptr = move_scores;
 
-                best_move_idx = -1;
-
-                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i, ++move_ptr)
                 {
                     debug_get_time(start_it);
 
-                    int32_t move_idx = move_scores[i].move_id;
+                    int32_t move_idx = move_ptr->move_id;
 
                     pos = &possible_moves_buf[move_idx];
 
@@ -4835,7 +4845,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
 
                         debug_get_time(stop);
 
-                        move_scores[i].is_exact = true;
+                        move_ptr->is_exact = true;
                         // debug_printf(FG_BLUE "[f %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                     }
                     else
@@ -4848,12 +4858,12 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                             childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
                             debug_get_time(stop);
 
-                            move_scores[i].is_exact = true;
+                            move_ptr->is_exact = true;
                             // debug_printf(FG_RED "[r %d: %d -> %d : %" PRId64 "] " RESET, move_idx, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
                         }
                         else
                         {
-                            move_scores[i].is_exact = false;
+                            move_ptr->is_exact = false;
                         }
                     }
 
@@ -4875,7 +4885,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         return;
                     }
 
-                    move_scores[i].move_eval = childres;
+                    move_ptr->move_eval = childres;
 
                     if (childres > iteration_alpha)
                     {
@@ -4884,101 +4894,112 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         best_move_idx = move_idx;
                     }
                 }
-            }
+            } while (0);
+        }
 
-            debug_printf("Search order: ");
-            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-                debug_printf("%d, ", move_scores[i].move_id);
-            debug_printf("\n");
+        debug_printf("Search order: ");
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            debug_printf("%d, ", move_scores[i].move_id);
+        debug_printf("\n");
 
-            debug_get_time(stop);
+        debug_get_time(stop);
 
-            uint64_t duration = get_time_diff_millis(stop, start);
+        uint64_t duration = get_time_diff_millis(stop, start);
 
-            debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+        debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
 #ifdef BRANCH_DEBUG
-                         ", checked_pos: %llu, pos/ms: %llu\n",
+                     ", checked_pos: %llu, pos/ms: %llu\n",
 #else
-                         "\n",
+                     "\n",
 #endif
-                         current_depth,
-                         duration,
-                         best_move_idx,
-                         iteration_alpha
+                     current_depth,
+                     duration,
+                     best_move_idx,
+                     iteration_alpha
 #ifdef BRANCH_DEBUG
-                         ,
-                         rec_counter - cur_rec_count,
-                         (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+                     ,
+                     rec_counter - cur_rec_count,
+                     (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
 #else
-            );
+        );
 #endif
 
-            prev_alpha = iteration_alpha;
-            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
+        prev_alpha = iteration_alpha;
+        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
 
-            if (iteration_alpha > 16384 || iteration_alpha < -16384)
-            {
-                debug_printf("end condition detected, exiting\n");
-                break;
-            }
+        if (iteration_alpha > 16384 || iteration_alpha < -16384)
+        {
+            debug_printf("end condition detected, exiting\n");
+            break;
         }
     }
-    else
-    {
-        possible_moves_min(position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask, position->args, possible_moves_buf, &possible_moves_buf_moves_count);
-        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-            if (possible_moves_buf[i].args.fields.sec_link > 3)
-            {
-                *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = -24576 - max_depth};
-                return;
-            }
+}
 
-        int32_t prev_beta = beta;
+static void minimax_iteration_main_st_min(const int32_t max_depth, minimax_main_result_t *__restrict__ ret)
+{
+    RNAB_ASSUME(possible_moves_buf_moves_count > 0);
 
-        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-            move_scores[i] = (move_scores_wrapper){i, MAX, false};
+    STATIC_BSS TIME_TYPE start, start_it, stop, global_start;
+    STATIC_BSS field_t *best_field;
+    STATIC_BSS field_t *pos;
 
-        for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    debug_printf("minimax_iteration_main entry\n");
+
+    debug_get_time(global_start);
+
+    for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+        if (possible_moves_buf[i].args.fields.sec_link > 3)
         {
-            int32_t best_move_idx = -1;
+            *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = -24576 - max_depth};
+            return;
+        }
 
-            uint64_t cur_rec_count = rec_counter;
-            debug_get_time(start);
+    int32_t prev_beta = MAX;
 
-            if (current_depth > 4)
+    for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    {
+        int32_t best_move_idx = -1;
+
+        uint64_t cur_rec_count = rec_counter;
+        debug_get_time(start);
+
+        if (current_depth > 4)
+        {
+            for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
             {
-                for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
+                move_scores_wrapper key = move_scores[i];
+                int32_t j = i - 1;
+                while (j >= 0)
                 {
-                    move_scores_wrapper key = move_scores[i];
-                    int32_t j = i - 1;
-                    while (j >= 0)
+                    move_scores_wrapper *prev = &move_scores[j];
+                    if (prev->move_eval < key.move_eval)
+                        break; // lower eval wins for minimizer
+                    if (prev->move_eval == key.move_eval)
                     {
-                        move_scores_wrapper *prev = &move_scores[j];
-                        if (prev->move_eval < key.move_eval)
-                            break; // lower eval wins for minimizer
-                        if (prev->move_eval == key.move_eval)
-                        {
-                            if (prev->is_exact && !key.is_exact)
-                                break;
-                            if (prev->is_exact == key.is_exact &&
-                                prev->move_id <= key.move_id)
-                                break;
-                        }
-                        move_scores[j + 1] = *prev;
-                        --j;
+                        if (prev->is_exact && !key.is_exact)
+                            break;
+                        if (prev->is_exact == key.is_exact &&
+                            prev->move_id <= key.move_id)
+                            break;
                     }
-                    move_scores[j + 1] = key;
+                    move_scores[j + 1] = *prev;
+                    --j;
                 }
+                move_scores[j + 1] = key;
             }
+        }
 
-            int32_t iteration_alpha = (current_depth == 4) ? MIN : (prev_beta - 5);
-            int32_t iteration_beta = prev_beta + 5;
+        int32_t iteration_alpha = (current_depth == 4) ? MIN : (prev_beta - 5);
+        int32_t iteration_beta = prev_beta + 5;
 
-            debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+        debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+        do
+        {
+            move_scores_wrapper *__restrict__ move_ptr = move_scores;
 
-            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i, ++move_ptr)
             {
-                int32_t move_idx = move_scores[i].move_id;
+                int32_t move_idx = move_ptr->move_id;
                 pos = &possible_moves_buf[move_idx];
 
                 int32_t childres;
@@ -4987,7 +5008,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                 {
                     childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
 
-                    move_scores[i].is_exact = true;
+                    move_ptr->is_exact = true;
                 }
                 else
                 {
@@ -4995,11 +5016,11 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     if (childres < iteration_beta)
                     {
                         childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
-                        move_scores[i].is_exact = true;
+                        move_ptr->is_exact = true;
                     }
                     else
                     {
-                        move_scores[i].is_exact = false;
+                        move_ptr->is_exact = false;
                     }
                 }
 
@@ -5021,7 +5042,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     return;
                 }
 
-                move_scores[i].move_eval = childres;
+                move_ptr->move_eval = childres;
 
                 if (childres < iteration_beta)
                 {
@@ -5036,21 +5057,26 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     break;
                 }
             }
+        } while (0);
 
-            bool guessed_incorrectly = (iteration_beta >= prev_beta + 5) || (iteration_beta <= iteration_alpha);
+        bool guessed_incorrectly = (iteration_beta >= prev_beta + 5) || (iteration_beta <= iteration_alpha);
 
-            iteration_alpha = (iteration_beta <= iteration_alpha) ? MIN : iteration_alpha;
-            iteration_beta = (iteration_beta >= prev_beta + 5) ? MAX : iteration_beta;
+        iteration_alpha = (iteration_beta <= iteration_alpha) ? MIN : iteration_alpha;
+        iteration_beta = (iteration_beta >= prev_beta + 5) ? MAX : iteration_beta;
 
-            if (guessed_incorrectly)
+        if (guessed_incorrectly)
+        {
+            debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+            best_move_idx = -1;
+
+            do
             {
-                debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+                move_scores_wrapper *__restrict__ move_ptr = move_scores;
 
-                best_move_idx = -1;
-
-                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+                for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i, ++move_ptr)
                 {
-                    int32_t move_idx = move_scores[i].move_id;
+                    int32_t move_idx = move_ptr->move_id;
                     pos = &possible_moves_buf[move_idx];
                     int32_t childres;
 
@@ -5058,7 +5084,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                     {
                         childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
 
-                        move_scores[i].is_exact = true;
+                        move_ptr->is_exact = true;
                     }
                     else
                     {
@@ -5066,11 +5092,11 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         if (childres < iteration_beta)
                         {
                             childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
-                            move_scores[i].is_exact = true;
+                            move_ptr->is_exact = true;
                         }
                         else
                         {
-                            move_scores[i].is_exact = false;
+                            move_ptr->is_exact = false;
                         }
                     }
 
@@ -5092,7 +5118,7 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         return;
                     }
 
-                    move_scores[i].move_eval = childres;
+                    move_ptr->move_eval = childres;
 
                     if (childres < iteration_beta)
                     {
@@ -5101,45 +5127,890 @@ static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_s
                         best_move_idx = move_idx;
                     }
                 }
+            } while (0);
+        }
+
+        debug_printf("Search order: ");
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            debug_printf("%d, ", move_scores[i].move_id);
+        debug_printf("\n");
+
+        debug_get_time(stop);
+
+        int64_t duration = get_time_diff_millis(stop, start);
+
+        debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+#ifdef BRANCH_DEBUG
+                     ", checked_pos: %llu, pos/ms: %llu\n",
+#else
+                     "\n",
+#endif
+                     current_depth,
+                     duration,
+                     best_move_idx,
+                     iteration_beta
+#ifdef BRANCH_DEBUG
+                     ,
+                     rec_counter - cur_rec_count,
+                     (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+#else
+        );
+#endif
+
+        prev_beta = iteration_beta;
+        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+
+        if (iteration_beta > 16384 || iteration_beta < -16384)
+        {
+            debug_printf("end condition detected, exiting\n");
+            break;
+        }
+    }
+}
+
+#ifdef RNAB_MT
+
+#include <stdatomic.h>
+
+extern uint8_t stack_buffer[STACK_SIZE * MAX_THREADS];
+
+_Atomic int shared_eval; // either beta or alpha
+_Atomic int queue_head;
+
+volatile int queue_size;
+volatile int other_bound;
+volatile int search_depth;
+
+void atomic_max(int local)
+{
+    int current = atomic_load_explicit(&shared_eval, memory_order_relaxed);
+    while (local > current)
+    {
+        if (atomic_compare_exchange_weak_explicit(&shared_eval, &current, local,
+                                                  memory_order_release,
+                                                  memory_order_acquire))
+        {
+            break;
+        }
+    }
+}
+
+void atomic_min(int local)
+{
+    int current = atomic_load_explicit(&shared_eval, memory_order_relaxed);
+    while (local < current)
+    {
+        if (atomic_compare_exchange_weak_explicit(&shared_eval, &current, local,
+                                                  memory_order_release,
+                                                  memory_order_acquire))
+        {
+            break;
+        }
+    }
+}
+
+int queue_claim_index()
+{
+    int idx = atomic_fetch_add_explicit(&queue_head, 1, memory_order_relaxed);
+
+    resume_main_thread(); // always wake up the main thread
+
+    return (idx < queue_size) ? idx : -1;
+}
+
+void minimax_max_worker()
+{
+    int data_id;
+
+    const int32_t beta = other_bound;
+    const int32_t current_depth = search_depth;
+
+    while ((data_id = queue_claim_index()) != -1)
+    {
+        move_scores_wrapper *out_ptr = &move_scores[data_id];
+
+        int32_t move_idx = out_ptr->move_id;
+        const field_t *pos = &possible_moves_buf[move_idx];
+
+        int32_t alpha = atomic_load_explicit(&shared_eval, memory_order_relaxed);
+
+        if (beta <= alpha)
+        {
+            continue; // we have to consume all nodes
+        }
+
+        int32_t childres = MINIMAX_CALL(minimax_min, current_depth - 1, alpha, alpha + 1, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+
+        if (childres > alpha)
+        {
+            childres = MINIMAX_CALL(minimax_min, current_depth - 1, alpha, beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+
+            out_ptr->is_exact = true;
+        }
+        else
+        {
+            out_ptr->is_exact = false;
+        }
+
+        if (should_exit) // search was interrupted, dont store unreliable data
+        {
+            atomic_store_explicit(&queue_head, 32768, memory_order_relaxed); // overwrite queue head
+            resume_main_thread();                                            // wake up the main thread, other helper threads should exit very soon too
+            return;
+        }
+
+        out_ptr->move_eval = childres;
+
+        atomic_max(childres);
+    }
+}
+
+void minimax_min_worker()
+{
+    int data_id;
+
+    const int32_t alpha = other_bound;
+    const int32_t current_depth = search_depth;
+
+    while ((data_id = queue_claim_index()) != -1)
+    {
+        move_scores_wrapper *out_ptr = &move_scores[data_id];
+
+        int32_t move_idx = out_ptr->move_id;
+        const field_t *pos = &possible_moves_buf[move_idx];
+
+        int32_t beta = atomic_load_explicit(&shared_eval, memory_order_relaxed);
+
+        if (beta <= alpha)
+        {
+            continue; // we have to consume all nodes
+        }
+
+        int32_t childres = MINIMAX_CALL(minimax_max, current_depth - 1, beta - 1, beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+
+        if (childres < beta)
+        {
+            childres = MINIMAX_CALL(minimax_max, current_depth - 1, alpha, beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+
+            out_ptr->is_exact = true;
+        }
+        else
+        {
+            out_ptr->is_exact = false;
+        }
+
+        if (should_exit) // search was interrupted, dont store unreliable data
+        {
+            atomic_store_explicit(&queue_head, 32768, memory_order_relaxed); // overwrite queue head
+            resume_main_thread();                                            // wake up the main thread, other helper threads should exit very soon too
+            return;
+        }
+
+        out_ptr->move_eval = childres;
+
+        atomic_min(childres);
+    }
+}
+
+static void minimax_iteration_main_mt_max(const int32_t max_depth, minimax_main_result_t *__restrict__ ret)
+{
+    RNAB_ASSUME(possible_moves_buf_moves_count > 0);
+
+    STATIC_BSS TIME_TYPE start, start_it, stop, global_start;
+    STATIC_BSS field_t *best_field;
+    STATIC_BSS field_t *pos;
+    bool guessed_incorrectly;
+
+    debug_printf("minimax_iteration_main entry\n");
+
+    debug_get_time(global_start);
+
+    for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+        if (possible_moves_buf[i].args.fields.fir_link > 3)
+        {
+            *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = 24576 + max_depth};
+            return;
+        }
+
+    int32_t prev_alpha = MIN;
+
+    for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    {
+        int32_t best_move_idx = -1;
+
+        uint64_t cur_rec_count = rec_counter;
+        debug_get_time(start);
+
+        if (current_depth > 4)
+        {
+            for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
+            {
+                move_scores_wrapper key = move_scores[i];
+                int32_t j = i - 1;
+                while (j >= 0)
+                {
+                    move_scores_wrapper *prev = &move_scores[j];
+                    if (prev->move_eval > key.move_eval)
+                        break;
+                    if (prev->move_eval == key.move_eval)
+                    {
+                        if (prev->is_exact && !key.is_exact)
+                            break; // exact always wins over non-exact
+                        if (prev->is_exact == key.is_exact &&
+                            prev->move_id <= key.move_id)
+                            break; // stable by move_id only among equals
+                    }
+                    move_scores[j + 1] = *prev;
+                    --j;
+                }
+                move_scores[j + 1] = key;
+            }
+
+            do // reset the scores
+            {
+                move_scores_wrapper *out_ptr = move_scores;
+
+                for (int k = 0; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    out_ptr->move_eval = MIN;
+                }
+            } while (0);
+        }
+
+        int32_t iteration_alpha = prev_alpha - 5;
+        int32_t iteration_beta = (current_depth == 4) ? MAX : (prev_alpha + 5);
+
+        debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+        do
+        {
+            debug_get_time(start_it);
+
+            int32_t move_id = move_scores[0].move_id;
+
+            pos = &possible_moves_buf[move_id];
+            int32_t childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+            debug_get_time(stop);
+
+            // debug_printf(FG_BLUE "[f %d: %d -> %d : %lld] " RESET, 0, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
+
+            if (should_exit)
+            {
+                debug_printf("Search order: ");
+                for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                    debug_printf("%d, ", move_scores[u].move_id);
+                debug_printf("\n");
+
+                return;
+            }
+
+            move_scores[0].is_exact = true;
+            move_scores[0].move_eval = childres;
+
+            if (childres > iteration_alpha)
+            {
+                best_field = pos;
+                iteration_alpha = childres;
+                best_move_idx = move_id;
+            }
+
+            if (iteration_beta <= iteration_alpha)
+            {
+                guessed_incorrectly = true;
+                goto __cutoff_alpha;
+            }
+        } while (0);
+
+        int thread_num = 0;
+
+        do
+        {
+            atomic_store_explicit(&shared_eval, iteration_alpha, memory_order_relaxed);
+            atomic_store_explicit(&queue_head, 1, memory_order_relaxed);
+
+            queue_size = possible_moves_buf_moves_count;
+            search_depth = current_depth;
+            other_bound = iteration_beta;
+
+            uint8_t *stack_top = stack_buffer + STACK_SIZE;
+
+            for (int k = 1; k < possible_moves_buf_moves_count; ++k, stack_top += STACK_SIZE)
+            {
+                thread_create(stack_top, minimax_max_worker);
+                ++thread_num;
+            }
+        } while (0);
+
+        if (thread_num == 0) // all threads failed
+        {
+            debug_printf("all threads failed\n");
+            // timer is already running
+            minimax_iteration_main_st_max(max_depth, ret);
+            return;
+        }
+
+        wait_for_queue();
+
+        // move_scores[k].move_eval remains MIN if a search was aborted
+
+        do
+        {
+            move_scores_wrapper *out_ptr = &move_scores[1];
+
+            for (int k = 1; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+            {
+                const int32_t childres = out_ptr->move_eval;
+                const int32_t move_id = out_ptr->move_id;
+
+                if (childres != MIN && childres > iteration_alpha)
+                {
+                    best_field = &possible_moves_buf[move_id];
+                    iteration_alpha = childres;
+                    best_move_idx = move_id;
+                }
+            }
+        } while (0);
+
+        if (should_exit)
+        {
+            if (best_move_idx != -1)
+            {
+                // at least one move completed and beat the lower bound
+                // best_field and iteration_alpha already reflect the best found so far
+                *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
             }
 
             debug_printf("Search order: ");
-            for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
-                debug_printf("%d, ", move_scores[i].move_id);
+            for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                debug_printf("%d, ", move_scores[u].move_id);
             debug_printf("\n");
+            debug_printf("timed out p2 2, best_move_idx=%d, eval=%d\n", best_move_idx, iteration_alpha);
 
-            debug_get_time(stop);
+            return;
+        }
 
-            int64_t duration = get_time_diff_millis(stop, start);
+        // gets here naturally if should_exit is not set
+        guessed_incorrectly = (iteration_alpha <= prev_alpha - 5) || (iteration_alpha >= iteration_beta);
 
-            debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
-#ifdef BRANCH_DEBUG
-                         ", checked_pos: %llu, pos/ms: %llu\n",
-#else
-                         "\n",
-#endif
-                         current_depth,
-                         duration,
-                         best_move_idx,
-                         iteration_beta
-#ifdef BRANCH_DEBUG
-                         ,
-                         rec_counter - cur_rec_count,
-                         (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
-#else
-            );
-#endif
+    __cutoff_alpha:
+        iteration_beta = (iteration_alpha >= iteration_beta) ? MAX : iteration_beta;
+        iteration_alpha = (iteration_alpha <= prev_alpha - 5) ? MIN : iteration_alpha;
 
-            prev_beta = iteration_beta;
-            *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+        if (guessed_incorrectly)
+        {
+            debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
 
-            if (iteration_beta > 16384 || iteration_beta < -16384)
+            do // reset the scores
             {
-                debug_printf("end condition detected, exiting\n");
-                break;
+                move_scores_wrapper *out_ptr = move_scores;
+
+                for (int k = 0; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    out_ptr->move_eval = MIN;
+                }
+            } while (0);
+
+            do
+            {
+                debug_get_time(start_it);
+
+                int32_t move_id = move_scores[0].move_id;
+
+                pos = &possible_moves_buf[move_id];
+                int32_t childres = MINIMAX_CALL(minimax_min, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                debug_get_time(stop);
+
+                // debug_printf(FG_BLUE "[f %d: %d -> %d : %lld] " RESET, 0, iteration_alpha, childres, get_time_diff_millis(stop, start_it));
+
+                if (should_exit)
+                {
+                    debug_printf("Search order: ");
+                    for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                        debug_printf("%d, ", move_scores[u].move_id);
+                    debug_printf("\n");
+
+                    return;
+                }
+
+                move_scores[0].is_exact = true;
+                move_scores[0].move_eval = childres;
+
+                if (childres > iteration_alpha)
+                {
+                    best_field = pos;
+                    iteration_alpha = childres;
+                    best_move_idx = move_id;
+                }
+            } while (0);
+
+            int thread_num = 0;
+
+            do
+            {
+                atomic_store_explicit(&shared_eval, iteration_alpha, memory_order_relaxed);
+                atomic_store_explicit(&queue_head, 1, memory_order_relaxed);
+
+                queue_size = possible_moves_buf_moves_count;
+                search_depth = current_depth;
+                other_bound = iteration_beta;
+
+                uint8_t *stack_top = stack_buffer + STACK_SIZE;
+
+                for (int k = 1; k < possible_moves_buf_moves_count; ++k, stack_top += STACK_SIZE)
+                {
+                    thread_create(stack_top, minimax_max_worker);
+                    ++thread_num;
+                }
+            } while (0);
+
+            if (thread_num == 0) // all threads failed
+            {
+                debug_printf("all threads failed\n");
+                // timer is already running
+                minimax_iteration_main_st_max(max_depth, ret);
+                return;
+            }
+
+            wait_for_queue();
+
+            // move_scores[k].move_eval remains MIN if a search was aborted
+
+            do
+            {
+                move_scores_wrapper *out_ptr = &move_scores[1];
+
+                for (int k = 1; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    const int32_t childres = out_ptr->move_eval;
+                    const int32_t move_id = out_ptr->move_id;
+
+                    if (childres != MIN && childres > iteration_alpha)
+                    {
+                        best_field = &possible_moves_buf[move_id];
+                        iteration_alpha = childres;
+                        best_move_idx = move_id;
+                    }
+                }
+            } while (0);
+
+            if (should_exit)
+            {
+                if (best_move_idx != -1)
+                {
+                    // at least one move completed and beat the lower bound
+                    // best_field and iteration_alpha already reflect the best found so far
+                    *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
+                }
+
+                debug_printf("Search order: ");
+                for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                    debug_printf("%d, ", move_scores[u].move_id);
+                debug_printf("\n");
+                debug_printf("timed out p2 2, best_move_idx=%d, eval=%d\n", best_move_idx, iteration_alpha);
+
+                return;
             }
         }
+
+        debug_printf("Search order: ");
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            debug_printf("%d, ", move_scores[i].move_id);
+        debug_printf("\n");
+
+        debug_get_time(stop);
+
+        uint64_t duration = get_time_diff_millis(stop, start);
+
+        debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+#ifdef BRANCH_DEBUG
+                     ", checked_pos: %llu, pos/ms: %llu\n",
+#else
+                     "\n",
+#endif
+                     current_depth,
+                     duration,
+                     best_move_idx,
+                     iteration_alpha
+#ifdef BRANCH_DEBUG
+                     ,
+                     rec_counter - cur_rec_count,
+                     (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+#else
+        );
+#endif
+
+        prev_alpha = iteration_alpha;
+        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_alpha};
+
+        if (iteration_alpha > 16384 || iteration_alpha < -16384)
+        {
+            debug_printf("end condition detected, exiting\n");
+            break;
+        }
     }
+}
+
+static void minimax_iteration_main_mt_min(const int32_t max_depth, minimax_main_result_t *__restrict__ ret)
+{
+    RNAB_ASSUME(possible_moves_buf_moves_count > 0);
+
+    STATIC_BSS TIME_TYPE start, start_it, stop, global_start;
+    STATIC_BSS field_t *best_field;
+    STATIC_BSS field_t *pos;
+    bool guessed_incorrectly;
+
+    debug_printf("minimax_iteration_main entry\n");
+
+    debug_get_time(global_start);
+
+    for (int32_t i = 0; i < MAX_MOVES; ++i)
+        if (possible_moves_buf[i].args.fields.sec_link > 3)
+        {
+            *ret = (minimax_main_result_t){.best_field = possible_moves_buf[i], .evaluation = -24576 - max_depth};
+            return;
+        }
+
+    int32_t prev_beta = MAX;
+
+    for (int32_t current_depth = 4; current_depth <= max_depth; current_depth += 2)
+    {
+        int32_t best_move_idx = -1;
+
+        uint64_t cur_rec_count = rec_counter;
+        debug_get_time(start);
+
+        if (current_depth > 4)
+        {
+            for (int32_t i = 1; i < possible_moves_buf_moves_count; ++i)
+            {
+                move_scores_wrapper key = move_scores[i];
+                int32_t j = i - 1;
+                while (j >= 0)
+                {
+                    move_scores_wrapper *prev = &move_scores[j];
+                    if (prev->move_eval < key.move_eval)
+                        break; // lower eval wins for minimizer
+                    if (prev->move_eval == key.move_eval)
+                    {
+                        if (prev->is_exact && !key.is_exact)
+                            break;
+                        if (prev->is_exact == key.is_exact &&
+                            prev->move_id <= key.move_id)
+                            break;
+                    }
+                    move_scores[j + 1] = *prev;
+                    --j;
+                }
+                move_scores[j + 1] = key;
+            }
+
+            do // reset the scores
+            {
+                move_scores_wrapper *out_ptr = move_scores;
+
+                for (int k = 0; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    out_ptr->move_eval = MAX;
+                }
+            } while (0);
+        }
+
+        int32_t iteration_alpha = (current_depth == 4) ? MIN : (prev_beta - 5);
+        int32_t iteration_beta = prev_beta + 5;
+
+        debug_printf("Window guess: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+        do
+        {
+            debug_get_time(start_it);
+
+            int32_t move_id = move_scores[0].move_id;
+
+            pos = &possible_moves_buf[move_id];
+            int32_t childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+            debug_get_time(stop);
+
+            if (should_exit)
+            {
+                debug_printf("Search order: ");
+                for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                    debug_printf("%d, ", move_scores[u].move_id);
+                debug_printf("\n");
+
+                return;
+            }
+
+            move_scores[0].is_exact = true;
+            move_scores[0].move_eval = childres;
+
+            if (childres < iteration_beta)
+            {
+                best_field = pos;
+                iteration_beta = childres;
+                best_move_idx = move_id;
+            }
+
+            if (iteration_beta <= iteration_alpha)
+            {
+                guessed_incorrectly = true;
+                goto __cutoff_beta;
+            }
+        } while (0);
+
+        int thread_num = 0;
+
+        do
+        {
+            atomic_store_explicit(&shared_eval, iteration_beta, memory_order_relaxed);
+            atomic_store_explicit(&queue_head, 1, memory_order_relaxed);
+
+            queue_size = possible_moves_buf_moves_count;
+            search_depth = current_depth;
+            other_bound = iteration_alpha;
+
+            uint8_t *stack_top = stack_buffer + STACK_SIZE;
+
+            for (int k = 1; k < possible_moves_buf_moves_count; ++k, stack_top += STACK_SIZE)
+            {
+                thread_create(stack_top, minimax_min_worker);
+                ++thread_num;
+            }
+        } while (0);
+
+        if (thread_num == 0) // all threads failed
+        {
+            debug_printf("all threads failed\n");
+            // timer is already running
+            minimax_iteration_main_st_min(max_depth, ret);
+            return;
+        }
+
+        wait_for_queue();
+
+        // move_scores[k].move_eval remains MAX if a search was aborted
+
+        do
+        {
+            move_scores_wrapper *out_ptr = &move_scores[1];
+
+            for (int k = 1; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+            {
+                const int32_t childres = out_ptr->move_eval;
+                const int32_t move_id = out_ptr->move_id;
+
+                if (childres != MAX && childres < iteration_beta)
+                {
+                    best_field = &possible_moves_buf[move_id];
+                    iteration_beta = childres;
+                    best_move_idx = move_id;
+                }
+            }
+        } while (0);
+
+        if (should_exit)
+        {
+            if (best_move_idx != -1)
+            {
+                // at least one move completed and beat the lower bound
+                // best_field and iteration_alpha already reflect the best found so far
+                *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+            }
+
+            debug_printf("Search order: ");
+            for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                debug_printf("%d, ", move_scores[u].move_id);
+            debug_printf("\n");
+            debug_printf("timed out p2 2, best_move_idx=%d, eval=%d\n", best_move_idx, iteration_beta);
+
+            return;
+        }
+
+        // gets here naturally if should_exit is not set
+        guessed_incorrectly = (iteration_beta >= prev_beta + 5) || (iteration_beta <= iteration_alpha);
+
+    __cutoff_beta:
+        iteration_alpha = (iteration_beta <= iteration_alpha) ? MIN : iteration_alpha;
+        iteration_beta = (iteration_beta >= prev_beta + 5) ? MAX : iteration_beta;
+
+        if (guessed_incorrectly)
+        {
+            debug_printf("Guess failed, updated window: [%d ~ %d]\n", iteration_alpha, iteration_beta);
+
+            do // reset the scores
+            {
+                move_scores_wrapper *out_ptr = move_scores;
+
+                for (int k = 0; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    out_ptr->move_eval = MAX;
+                }
+            } while (0);
+
+            do
+            {
+                debug_get_time(start_it);
+
+                int32_t move_id = move_scores[0].move_id;
+
+                pos = &possible_moves_buf[move_id];
+                int32_t childres = MINIMAX_CALL(minimax_max, current_depth - 1, iteration_alpha, iteration_beta, field_evaluate_slow(pos), pos->is_fir_mask, pos->is_sec_mask, pos->is_link_mask, pos->is_boosted_mask, pos->args);
+                debug_get_time(stop);
+
+                if (should_exit)
+                {
+                    debug_printf("Search order: ");
+                    for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                        debug_printf("%d, ", move_scores[u].move_id);
+                    debug_printf("\n");
+
+                    return;
+                }
+
+                move_scores[0].is_exact = true;
+                move_scores[0].move_eval = childres;
+
+                if (childres < iteration_beta)
+                {
+                    best_field = pos;
+                    iteration_beta = childres;
+                    best_move_idx = move_id;
+                }
+            } while (0);
+
+            int thread_num = 0;
+
+            do
+            {
+                atomic_store_explicit(&shared_eval, iteration_beta, memory_order_relaxed);
+                atomic_store_explicit(&queue_head, 1, memory_order_relaxed);
+
+                queue_size = possible_moves_buf_moves_count;
+                search_depth = current_depth;
+                other_bound = iteration_alpha;
+
+                uint8_t *stack_top = stack_buffer + STACK_SIZE;
+
+                for (int k = 1; k < possible_moves_buf_moves_count; ++k, stack_top += STACK_SIZE)
+                {
+                    thread_create(stack_top, minimax_min_worker);
+                    ++thread_num;
+                }
+            } while (0);
+
+            if (thread_num == 0) // all threads failed
+            {
+                debug_printf("all threads failed\n");
+                // timer is already running
+                minimax_iteration_main_st_min(max_depth, ret);
+                return;
+            }
+
+            wait_for_queue();
+
+            // move_scores[k].move_eval remains MAX if a search was aborted
+
+            do
+            {
+                move_scores_wrapper *out_ptr = &move_scores[1];
+
+                for (int k = 1; k < possible_moves_buf_moves_count; ++k, ++out_ptr)
+                {
+                    const int32_t childres = out_ptr->move_eval;
+                    const int32_t move_id = out_ptr->move_id;
+
+                    if (childres != MAX && childres < iteration_beta)
+                    {
+                        best_field = &possible_moves_buf[move_id];
+                        iteration_beta = childres;
+                        best_move_idx = move_id;
+                    }
+                }
+            } while (0);
+
+            if (should_exit)
+            {
+                if (best_move_idx != -1)
+                {
+                    // at least one move completed and beat the lower bound
+                    // best_field and iteration_alpha already reflect the best found so far
+                    *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+                }
+
+                debug_printf("Search order: ");
+                for (int32_t u = 0; u < possible_moves_buf_moves_count; ++u)
+                    debug_printf("%d, ", move_scores[u].move_id);
+                debug_printf("\n");
+                debug_printf("timed out p2 2, best_move_idx=%d, eval=%d\n", best_move_idx, iteration_beta);
+
+                return;
+            }
+        }
+
+        debug_printf("Search order: ");
+        for (int32_t i = 0; i < possible_moves_buf_moves_count; ++i)
+            debug_printf("%d, ", move_scores[i].move_id);
+        debug_printf("\n");
+
+        debug_get_time(stop);
+
+        int64_t duration = get_time_diff_millis(stop, start);
+
+        debug_printf("Depth %d completed in %llu ms (best_move_idx = %d), evaluation: %d"
+#ifdef BRANCH_DEBUG
+                     ", checked_pos: %llu, pos/ms: %llu\n",
+#else
+                     "\n",
+#endif
+                     current_depth,
+                     duration,
+                     best_move_idx,
+                     iteration_beta
+#ifdef BRANCH_DEBUG
+                     ,
+                     rec_counter - cur_rec_count,
+                     (rec_counter - cur_rec_count) / ((duration == 0) ? 1 : duration));
+#else
+        );
+#endif
+
+        prev_beta = iteration_beta;
+        *ret = (minimax_main_result_t){.best_field = *best_field, .evaluation = iteration_beta};
+
+        if (iteration_beta > 16384 || iteration_beta < -16384)
+        {
+            debug_printf("end condition detected, exiting\n");
+            break;
+        }
+    }
+}
+
+#endif
+
+static void minimax_iteration_main(const int32_t max_depth, const uint32_t max_search_time, const bool player, const field_t *__restrict__ position, minimax_main_result_t *__restrict__ ret)
+{
+    (player ? possible_moves_max : possible_moves_min)(position->is_fir_mask, position->is_sec_mask, position->is_link_mask, position->is_boosted_mask, position->args, possible_moves_buf, &possible_moves_buf_moves_count);
+
+    if (possible_moves_buf_moves_count == 0) // guard
+        return;
+
+    CLEAR_TT();
+
+    do
+    {
+        uint32_t base = (uint32_t)(uint16_t)(player ? MAX : MIN);
+        for (int32_t i = 0; i < MAX_MOVES; ++i, base += (1 << 16))
+        {
+            move_scores[i] = *(move_scores_wrapper *)&base;
+        }
+    } while (0);
+
+    start_search_timer(max_search_time);
+
+#ifdef RNAB_MT
+    ((get_thread_count() > 2) ? (player ? minimax_iteration_main_mt_max : minimax_iteration_main_mt_min) : ((player ? minimax_iteration_main_st_max : minimax_iteration_main_st_min)))(max_depth, ret);
+#else
+    (player ? minimax_iteration_main_st_max : minimax_iteration_main_st_min)(max_depth, ret);
+#endif
 
     stop_search_timer();
 }
