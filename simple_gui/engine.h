@@ -1625,9 +1625,9 @@ void start_render()
     }
     render_state = 1;
 
-    static struct timespec time_sct;
-    clock_gettime(CLOCK_MONOTONIC, &time_sct);
-    current_time = (time_sct.tv_sec * 1000000) + (time_sct.tv_nsec / 1000);
+    static TIME_TYPE time_sct;
+    get_time(time_sct);
+    current_time = get_time_uint(time_sct);
 
     // Bind framebuffer and set viewport to fixed size
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
