@@ -134,10 +134,7 @@ extern EXPORT_API int32_t rnab_compute_possible_moves(generic_representation *__
     if (convert_res != 0)
         return -convert_res;
 
-    if (player)
-        possible_moves_max(position.is_fir_mask, position.is_sec_mask, position.is_link_mask, position.is_boosted_mask, position.args);
-    else
-        possible_moves_max(position.is_fir_mask, position.is_sec_mask, position.is_link_mask, position.is_boosted_mask, position.args);
+    (player ? possible_moves_max : possible_moves_min)(position.is_fir_mask, position.is_sec_mask, position.is_link_mask, position.is_boosted_mask, position.args);
 
     for (int i = 0; i < possible_moves_buf_moves_count; ++i)
     {
@@ -205,9 +202,9 @@ extern EXPORT_API int32_t rnab_compute_best_move(generic_representation *__restr
 {
     STATIC_BSS field_t position;
     STATIC_BSS minimax_main_result_t res;
-    // Depth must be at least 2 and even (divisible by 2) for iterative deepening
+    // Depth must be at least 4 (max 30) and even (divisible by 2) for iterative deepening
     // max_search_time must be at least 100 milliseconds
-    if (max_depth < 2 || max_depth % 2 != 0 || max_search_time < 100)
+    if (max_depth < 4 || max_depth > 30 ||  max_depth % 2 != 0 || max_search_time < 100)
         return 1;
 
     int32_t convert_res = generic_representation_to_intern(game_state, &position);
@@ -221,7 +218,7 @@ extern EXPORT_API int32_t rnab_compute_best_move(generic_representation *__restr
         game_state->player_second_captured_viruses_num < 0 || game_state->player_second_captured_viruses_num > 3)
         return 11;
 
-    minimax_iteration_main(max_depth, max_search_time, MIN, MAX, player, &position, &res);
+    minimax_iteration_main(max_depth, max_search_time, player, &position, &res);
     intern_to_generic_representation(&res.best_field, game_state);
 
     return 0;
