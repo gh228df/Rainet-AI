@@ -1114,7 +1114,6 @@ static inline void sys_exit(void)
         while (atomic_load(&queue_head) < queue_size + thread_num)   \
         {                                                            \
             ResetEvent(g_wake_event);                                \
-            /* Re-check AFTER reset — this closes the race */        \
             if (atomic_load(&queue_head) >= queue_size + thread_num) \
                 break;                                               \
             WaitForSingleObject(g_wake_event, INFINITE);             \
