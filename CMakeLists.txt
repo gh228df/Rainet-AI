@@ -115,13 +115,18 @@ if(WIN32)
     )
     target_link_options(rnab PRIVATE
         -static
-        -nodefaultlibs
         -mno-stack-arg-probe
         -Wl,--no-insert-timestamp       # reproducible builds
         -Wl,--major-subsystem-version,5 # target XP and above
         -Wl,--minor-subsystem-version,1
         $<$<BOOL:${BUILD_LIBRARY}>:-nostdlib>
     )
+    if(BUILD_LIBRARY)
+        target_link_options(rnab PRIVATE
+            -nodefaultlibs
+            $<$<BOOL:${BUILD_LIBRARY}>:-nostdlib>
+        )
+    endif()
     target_link_libraries(rnab PRIVATE kernel32)
 
 # ─────────────────────────────────────────────
@@ -151,6 +156,7 @@ elseif(ANDROID)
     target_compile_options(rnab PRIVATE
         -fno-builtin
         -ffreestanding
+        -mno-outline-atomics
     )
     target_link_options(rnab PRIVATE
         -nostdlib
