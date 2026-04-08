@@ -1,7 +1,7 @@
 #if defined(__APPLE__)
-    #define STATIC_BSS static __attribute__((section("__DATA,__bss")))
+#define STATIC_BSS static __attribute__((section("__DATA,__bss")))
 #else
-    #define STATIC_BSS static __attribute__((section(".bss")))
+#define STATIC_BSS static __attribute__((section(".bss")))
 #endif
 
 STATIC_BSS volatile bool should_exit = false;
@@ -55,6 +55,8 @@ STATIC_BSS volatile bool should_exit = false;
 
 #elif defined(__wasm__)
 
+#undef RNAB_MT // not supported
+
 #define CLEAR_TT() \
     __builtin_memset(table, 0, sizeof(table));
 
@@ -63,6 +65,8 @@ STATIC_BSS volatile bool should_exit = false;
 #endif
 
 #else
+
+#undef RNAB_MT // cant perform atomic 8-byte reads/writes
 
 #if defined(__i386__)
 
@@ -128,8 +132,9 @@ STATIC_BSS volatile bool should_exit = false;
 #if defined(_WIN32) || defined(_WIN64)
 
 static LARGE_INTEGER _qpf_freq;
-static HANDLE _win_event  = NULL;
+static HANDLE _win_event = NULL;
 static HANDLE _win_thread = NULL;
+static HANDLE g_wake_event;
 
 BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
@@ -138,13 +143,21 @@ BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvRes
 
 #ifdef RNAB_DEBUG
     if (fdwReason == DLL_PROCESS_ATTACH)
+    {
         QueryPerformanceFrequency(&_qpf_freq);
+        g_wake_event = CreateEvent(NULL, TRUE, FALSE, NULL);
+    }
 #endif
     return TRUE;
 }
 
 #define TIME_TYPE LARGE_INTEGER
 #define get_time(v) QueryPerformanceCounter(&(v))
+
+static uint64_t get_time_uint(TIME_TYPE t)
+{
+    return t.QuadPart * 1000000ULL / _qpf_freq.QuadPart;
+}
 
 static uint64_t get_time_diff_millis(TIME_TYPE stop, TIME_TYPE start)
 {
@@ -207,6 +220,8 @@ static inline __attribute__((always_inline)) void stop_search_timer(void)
 /* We dont directly support apple but these ones work on the jailbroken aarch64 devices */
 #elif defined(__APPLE__)
 
+#undef RNAB_MT // not supported
+
 #if defined(__aarch64__)
 
 #define sys_write(fd, buf, len)                                                   \
@@ -244,6 +259,9 @@ struct timeval
             : "memory", "cc");                                         \
         (t) = (unsigned long long)tv.tv_sec * 1000000ULL + tv.tv_usec; \
     } while (0)
+
+#define get_time_uint(t) \
+    (t)
 
 #define get_time_diff_millis(stop, start) \
     ((uint64_t)(((stop) - (start)) / 1000ULL))
@@ -296,6 +314,9 @@ typedef struct _kern_timespec TIME_TYPE;
 #define _TV_NSEC(t) ((t).tv_nsec)
 
 /* Avoid 64-bit divisions */
+
+#define get_time_uint(t) \
+    (_TV_SEC(t) * (int64_t)1000000 + (int32_t)(_TV_NSEC(t)) / 1000)
 
 #define get_time_diff_millis(stop, start) \
     (uint64_t)((_TV_SEC(stop) - _TV_SEC(start)) * (int64_t)1000 + (int32_t)(_TV_NSEC(stop) - _TV_NSEC(start)) / 1000000)
@@ -674,7 +695,7 @@ static inline void stop_search_timer(void)
 
     _sys_timer_delete(_linux_timer_id);
     _linux_timer_id = -1;
-    
+
     _sys_rt_sigprocmask(_SIG_UNBLOCK, _sigalrm_mask, 0);
 }
 
@@ -708,6 +729,9 @@ __attribute__((__import_module__("wasi_snapshot_preview1"), __import_name__("clo
         (t) = _ns;                         \
     } while (0)
 
+#define get_time_uint(t) \
+    ((uint64_t)(t) / 1000ULL)
+
 #define get_time_diff_millis(stop, start) \
     ((uint64_t)(((stop) - (start)) / 1000000ULL))
 
@@ -720,4 +744,392 @@ __attribute__((__import_module__("wasi_snapshot_preview1"), __import_name__("clo
 
 #else
 #error "Unsupported platform"
+#endif
+
+#ifdef RNAB_MT
+
+#if defined(__linux__)
+
+STATIC_BSS uint8_t stack_buffer[MAX_THREADS * STACK_SIZE] __attribute__((aligned(4096)));
+
+#define CLONE_VM 0x00000100
+#define CLONE_FS 0x00000200
+#define CLONE_FILES 0x00000400
+#define CLONE_SIGHAND 0x00000800
+#define CLONE_THREAD 0x00010000
+#define CLONE_SYSVSEM 0x00040000
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_PRIVATE_FLAG 128
+
+#define THREAD_FLAGS \
+    (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM)
+
+#define get_thread_count() 4 // to be implemented
+
+#if defined(__x86_64__)
+
+#define SYS_CLONE 56
+#define SYS_EXIT 60
+#define SYS_FUTEX 202
+
+static inline void sys_exit(void)
+{
+    __asm__ volatile("syscall" ::"a"(SYS_EXIT), "D"(0));
+    __builtin_unreachable();
+}
+
+#define thread_create(stack_top, fn)                         \
+    long tid;                                                \
+    __asm__ volatile(                                        \
+        "syscall"                                            \
+        : "=a"(tid)                                          \
+        : "0"(SYS_CLONE), "D"(THREAD_FLAGS), "S"(stack_top), \
+          "d"(0), "r"((long)0), "r"((long)0)                 \
+        : "rcx", "r11", "memory");                           \
+                                                             \
+    if (tid == 0)                                            \
+    {                                                        \
+        fn();                                                \
+        sys_exit();                                          \
+    }                                                        \
+    if (tid < 0) /* failure */                               \
+    {                                                        \
+        break;                                               \
+    }
+
+#define resume_main_thread()                                                       \
+    do                                                                             \
+    {                                                                              \
+        long ret;                                                                  \
+        register long r10 __asm__("r10") = 0; /* timeout  = NULL */                \
+        register long r8 __asm__("r8") = 0;   /* uaddr2   = NULL */                \
+        register long r9 __asm__("r9") = 0;   /* val3     = 0    */                \
+                                                                                   \
+        __asm__ volatile(                                                          \
+            "syscall"                                                              \
+            : "=a"(ret)                                                            \
+            : "a"(SYS_FUTEX),                                                      \
+              "D"(&queue_head),                           /* uaddr  */             \
+              "S"((long)FUTEX_WAKE | FUTEX_PRIVATE_FLAG), /* FUTEX_WAKE */         \
+              "d"((long)1),                               /* val: wake 1 waiter */ \
+              "r"(r10), "r"(r8), "r"(r9)                                           \
+            : "rcx", "r11", "memory");                                             \
+    } while (0);
+
+#define wait_for_queue()                                                           \
+    do                                                                             \
+    {                                                                              \
+        int cur_val = atomic_load(&queue_head);                                    \
+        while (cur_val < queue_size + thread_num)                                  \
+        {                                                                          \
+            long ret;                                                              \
+            register long r10 __asm__("r10") = 0; /* timeout = NULL */             \
+            register long r8 __asm__("r8") = 0;   /* uaddr2  = NULL */             \
+            register long r9 __asm__("r9") = 0;   /* val3    = 0    */             \
+                                                                                   \
+            __asm__ volatile(                                                      \
+                "syscall"                                                          \
+                : "=a"(ret)                                                        \
+                : "a"(SYS_FUTEX),                                                  \
+                  "D"(&queue_head),                           /* uaddr          */ \
+                  "S"((long)FUTEX_WAIT | FUTEX_PRIVATE_FLAG), /* FUTEX_WAIT     */ \
+                  "d"((long)cur_val),                         /* expected value */ \
+                  "r"(r10), "r"(r8), "r"(r9)                                       \
+                : "rcx", "r11", "memory");                                         \
+                                                                                   \
+            cur_val = atomic_load(&queue_head);                                    \
+        }                                                                          \
+    } while (0);
+
+#elif defined(__i386__)
+
+#define SYS_CLONE 120
+#define SYS_EXIT 1
+#define SYS_FUTEX 240
+
+static inline void sys_exit(void)
+{
+    __asm__ volatile(
+        "int $0x80" ::"a"(SYS_EXIT), "b"(0)
+        : "memory");
+    __builtin_unreachable();
+}
+
+#define thread_create(stack_top, fn)      \
+    long tid;                             \
+                                          \
+    __asm__ volatile(                     \
+        "int $0x80"                       \
+        : "=a"(tid)                       \
+        : "0"(SYS_CLONE),                 \
+          "b"(THREAD_FLAGS), /* flags  */ \
+          "c"(stack_top),    /* stack  */ \
+          "d"(0),            /* ptid   */ \
+          "S"(0),            /* ctid   */ \
+          "D"(0)             /* tls    */ \
+        : "memory");                      \
+                                          \
+    if (tid == 0)                         \
+    {                                     \
+        fn();                             \
+        sys_exit();                       \
+    }                                     \
+    if (tid < 0) /* failure */            \
+    {                                     \
+        break;                            \
+    }
+
+#define resume_main_thread()                                             \
+    do                                                                   \
+    {                                                                    \
+        long ret;                                                        \
+                                                                         \
+        __asm__ volatile(                                                \
+            "pushl %%ebp        \n\t"                                    \
+            "movl  $0, %%ebp   \n\t" /* val3 = 0 */                      \
+            "int   $0x80        \n\t"                                    \
+            "popl  %%ebp        \n\t"                                    \
+            : "=a"(ret)                                                  \
+            : "a"(SYS_FUTEX),                                            \
+              "b"(&queue_head),                     /* uaddr      */     \
+              "c"(FUTEX_WAKE | FUTEX_PRIVATE_FLAG), /* FUTEX_WAKE */     \
+              "d"(1),                               /* val: wake 1 */    \
+              "S"(0),                               /* timeout = NULL */ \
+              "D"(0)                                /* uaddr2  = NULL */ \
+            : "memory");                                                 \
+    } while (0);
+
+#define wait_for_queue()                                                     \
+    do                                                                       \
+    {                                                                        \
+        int cur_val = atomic_load(&queue_head);                              \
+        while (cur_val < queue_size + thread_num)                            \
+        {                                                                    \
+            long ret;                                                        \
+            __asm__ volatile(                                                \
+                "pushl %%ebp        \n\t"                                    \
+                "movl  $0, %%ebp   \n\t" /* val3 = 0 */                      \
+                "int   $0x80        \n\t"                                    \
+                "popl  %%ebp        \n\t"                                    \
+                : "=a"(ret)                                                  \
+                : "a"(SYS_FUTEX),                                            \
+                  "b"(&queue_head),                     /* uaddr          */ \
+                  "c"(FUTEX_WAIT | FUTEX_PRIVATE_FLAG), /* FUTEX_WAIT     */ \
+                  "d"(cur_val),                         /* expected value */ \
+                  "S"(0),                               /* timeout = NULL */ \
+                  "D"(0)                                /* uaddr2  = NULL */ \
+                : "memory");                                                 \
+                                                                             \
+            cur_val = atomic_load(&queue_head);                              \
+        }                                                                    \
+    } while (0);
+
+#elif defined(__aarch64__)
+
+#define SYS_CLONE 220
+#define SYS_EXIT 93
+#define SYS_FUTEX 98
+
+static inline void sys_exit(void)
+{
+    register long x8 __asm__("x8") = SYS_EXIT;
+    register long x0 __asm__("x0") = 0;
+    __asm__ volatile(
+        "svc #0" ::"r"(x8), "r"(x0)
+        : "memory");
+    __builtin_unreachable();
+}
+
+#define thread_create(stack_top, fn)                  \
+    register long x8 __asm__("x8") = SYS_CLONE;       \
+    register long x0 __asm__("x0") = THREAD_FLAGS;    \
+    register long x1 __asm__("x1") = (long)stack_top; \
+    register long x2 __asm__("x2") = 0; /* ptid */    \
+    register long x3 __asm__("x3") = 0; /* ctid */    \
+    register long x4 __asm__("x4") = 0; /* tls  */    \
+                                                      \
+    __asm__ volatile(                                 \
+        "svc #0"                                      \
+        : "+r"(x0)                                    \
+        : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) \
+        : "memory", "cc");                            \
+                                                      \
+    if (x0 == 0)                                      \
+    {                                                 \
+        fn();                                         \
+        sys_exit();                                   \
+    }                                                 \
+    if (x0 < 0) /* failure */                         \
+    {                                                 \
+        break;                                        \
+    }
+
+#define resume_main_thread()                                                                \
+    do                                                                                      \
+    {                                                                                       \
+        register long x8 __asm__("x8") = SYS_FUTEX;                                         \
+        register long x0 __asm__("x0") = (long)&queue_head;                                 \
+        register long x1 __asm__("x1") = FUTEX_WAKE | FUTEX_PRIVATE_FLAG; /* FUTEX_WAKE  */ \
+        register long x2 __asm__("x2") = 1;                               /* val: wake 1 */ \
+        register long x3 __asm__("x3") = 0;                               /* timeout     */ \
+        register long x4 __asm__("x4") = 0;                               /* uaddr2      */ \
+        register long x5 __asm__("x5") = 0;                               /* val3        */ \
+                                                                                            \
+        __asm__ volatile(                                                                   \
+            "svc #0"                                                                        \
+            : "+r"(x0)                                                                      \
+            : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)                          \
+            : "memory", "cc");                                                              \
+    } while (0);
+
+#define wait_for_queue()                                                                           \
+    do                                                                                             \
+    {                                                                                              \
+        int cur_val = atomic_load(&queue_head);                                                    \
+        while (cur_val < queue_size + thread_num)                                                  \
+        {                                                                                          \
+            register long x8 __asm__("x8") = SYS_FUTEX;                                            \
+            register long x0 __asm__("x0") = (long)&queue_head;                                    \
+            register long x1 __asm__("x1") = FUTEX_WAIT | FUTEX_PRIVATE_FLAG; /* FUTEX_WAIT     */ \
+            register long x2 __asm__("x2") = (long)cur_val;                   /* expected value */ \
+            register long x3 __asm__("x3") = 0;                               /* timeout        */ \
+            register long x4 __asm__("x4") = 0;                               /* uaddr2         */ \
+            register long x5 __asm__("x5") = 0;                               /* val3           */ \
+                                                                                                   \
+            __asm__ volatile(                                                                      \
+                "svc #0"                                                                           \
+                : "+r"(x0)                                                                         \
+                : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)                             \
+                : "memory", "cc");                                                                 \
+                                                                                                   \
+            cur_val = atomic_load(&queue_head);                                                    \
+        }                                                                                          \
+    } while (0);
+
+#elif defined(__arm__)
+
+#define SYS_CLONE 120
+#define SYS_EXIT 1
+#define SYS_FUTEX 240
+
+static inline void sys_exit(void)
+{
+    register long r7 __asm__("r7") = SYS_EXIT;
+    register long r0 __asm__("r0") = 0;
+    __asm__ volatile(
+        "swi #0" ::"r"(r7), "r"(r0)
+        : "memory");
+    __builtin_unreachable();
+}
+
+#define thread_create(stack_top, fn)                  \
+    register long r7 __asm__("r7") = SYS_CLONE;       \
+    register long r0 __asm__("r0") = THREAD_FLAGS;    \
+    register long r1 __asm__("r1") = (long)stack_top; \
+    register long r2 __asm__("r2") = 0; /* ptid */    \
+    register long r3 __asm__("r3") = 0; /* ctid */    \
+    register long r4 __asm__("r4") = 0; /* tls  */    \
+                                                      \
+    __asm__ volatile(                                 \
+        "swi #0"                                      \
+        : "+r"(r0)                                    \
+        : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4) \
+        : "memory", "cc");                            \
+                                                      \
+    if (r0 == 0)                                      \
+    {                                                 \
+        fn();                                         \
+        sys_exit();                                   \
+    }                                                 \
+    if (r0 < 0) /* failure */                         \
+    {                                                 \
+        break;                                        \
+    }
+
+#define resume_main_thread()                                                                \
+    do                                                                                      \
+    {                                                                                       \
+        register long r7 __asm__("r7") = SYS_FUTEX;                                         \
+        register long r0 __asm__("r0") = (long)&queue_head;                                 \
+        register long r1 __asm__("r1") = FUTEX_WAKE | FUTEX_PRIVATE_FLAG; /* FUTEX_WAKE  */ \
+        register long r2 __asm__("r2") = 1;                               /* val: wake 1 */ \
+        register long r3 __asm__("r3") = 0;                               /* timeout     */ \
+        register long r4 __asm__("r4") = 0;                               /* uaddr2      */ \
+        register long r5 __asm__("r5") = 0;                               /* val3        */ \
+                                                                                            \
+        __asm__ volatile(                                                                   \
+            "swi #0"                                                                        \
+            : "+r"(r0)                                                                      \
+            : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)                          \
+            : "memory", "cc");                                                              \
+    } while (0);
+
+#define wait_for_queue()                                                                           \
+    do                                                                                             \
+    {                                                                                              \
+        int cur_val = atomic_load(&queue_head);                                                    \
+        while (cur_val < queue_size + thread_num)                                                  \
+        {                                                                                          \
+            register long r7 __asm__("r7") = SYS_FUTEX;                                            \
+            register long r0 __asm__("r0") = (long)&queue_head;                                    \
+            register long r1 __asm__("r1") = FUTEX_WAIT | FUTEX_PRIVATE_FLAG; /* FUTEX_WAIT     */ \
+            register long r2 __asm__("r2") = (long)cur_val;                   /* expected value */ \
+            register long r3 __asm__("r3") = 0;                               /* timeout        */ \
+            register long r4 __asm__("r4") = 0;                               /* uaddr2         */ \
+            register long r5 __asm__("r5") = 0;                               /* val3           */ \
+                                                                                                   \
+            __asm__ volatile(                                                                      \
+                "swi #0"                                                                           \
+                : "+r"(r0)                                                                         \
+                : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)                             \
+                : "memory", "cc");                                                                 \
+                                                                                                   \
+            cur_val = atomic_load(&queue_head);                                                    \
+        }                                                                                          \
+    } while (0);
+
+#else
+#error "Unsupported platform"
+#endif
+
+#elif defined(_WIN32) || defined(_WIN64)
+
+#define thread_create(stack_top, fn)                                             \
+    HANDLE h = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)fn, NULL, 0, NULL); \
+    if (h)                                                                       \
+        CloseHandle(h);                                                          \
+    else /* failure */                                                           \
+        break;
+
+#define resume_main_thread()    \
+    do                          \
+    {                           \
+        SetEvent(g_wake_event); \
+    } while (0)
+
+#define wait_for_queue()                                             \
+    do                                                               \
+    {                                                                \
+        while (atomic_load(&queue_head) < queue_size + thread_num)   \
+        {                                                            \
+            ResetEvent(g_wake_event);                                \
+            /* Re-check AFTER reset — this closes the race */        \
+            if (atomic_load(&queue_head) >= queue_size + thread_num) \
+                break;                                               \
+            WaitForSingleObject(g_wake_event, INFINITE);             \
+        }                                                            \
+    } while (0)
+
+static inline int get_thread_count()
+{
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return (int)si.dwNumberOfProcessors;
+}
+
+#else
+#error "Unsupported platform"
+#endif
+
 #endif
