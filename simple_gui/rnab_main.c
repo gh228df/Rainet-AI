@@ -1,5 +1,3 @@
-#define _POSIX_C_SOURCE 200112L
-#include <pthread.h>
 #include "../rnab_engine/rnab.h"
 #include "amalgamation.h"
 #include <math.h>
@@ -18,6 +16,8 @@ bool is_boost_available_fir;
 bool is_boost_available_sec;
 bool is_checker_available_fir;
 bool is_checker_available_sec;
+bool is_firewall_available_fir;
+bool is_firewall_available_sec;
 
 void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy_reveal_mask, uint64_t ally_reveal_mask, uint8_t taken_first_links, uint8_t taken_first_viruses, uint8_t taken_second_links, uint8_t taken_second_viruses)
 {
@@ -234,22 +234,24 @@ void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy
 
     // render with enemy color for clarity
 
-    if (position->args.fields.firewall_fir == 0)
+    if (is_firewall_available_fir)
     {
         render_tex(&firewall_enemy, 54 * 5, 54 * 1, 255, 255, 255, 255, 0);
     }
-    else
+
+    if (position->args.fields.firewall_fir)
     {
-        render_tex(&firewall_vis_ally, (7 - (int)((position->args.fields.firewall_fir >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_fir >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_enemy, (7 - (int)((position->args.fields.firewall_fir >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_fir >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 
-    if (position->args.fields.firewall_sec == 0)
+    if (is_firewall_available_sec)
     {
         render_tex(&firewall_ally, 54 * 5, 54 * 10, 255, 255, 255, 255, 0);
     }
-    else
+
+    if (position->args.fields.firewall_sec)
     {
-        render_tex(&firewall_vis_enemy, (7 - (int)((position->args.fields.firewall_sec >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_sec >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
+        render_tex(&firewall_vis_ally, (7 - (int)((position->args.fields.firewall_sec >> 1) & 7)) * 54, (9 - (int)((position->args.fields.firewall_sec >> 1) >> 3)) * 54, 255, 255, 255, 255, 0);
     }
 }
 
@@ -317,6 +319,7 @@ typedef enum
     GAME_STATE_PLAYER_CAPTURE_CARD_ANIM, // capture card animation
     GAME_STATE_PLAYER_DEPOSIT_CARD_ANIM, // depo card animation
     GAME_STATE_PLAYER_CHECKER_P1,        // player clicked on the checker powerup
+    GAME_STATE_PLAYER_CHECKER_ANIM,      // checker animation
     GAME_STATE_PLAYER_LOSE,              // player lose anim
     GAME_STATE_PLAYER_LOST,              // player lose screen
     GAME_STATE_PLAYER_WIN,               // player wins
@@ -331,8 +334,6 @@ typedef enum
     GAME_STATE_AI_BOOST,
     GAME_STATE_AI_UNBOOST,
 } game_state;
-
-pthread_mutex_t ai_move_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 bool player_begins = true;
 
@@ -1029,9 +1030,8 @@ void reveal_enemy_card(struct button_t *self)
         decals[i]->on_click = NULL;
     decals_size = 0;
 
-    state = GAME_STATE_AI_IDLE;
-
-    ai_move();
+    state = GAME_STATE_PLAYER_CHECKER_ANIM;
+    last_time_appear = current_time;
 }
 
 void checker_p1(struct button_t *self)
@@ -1146,9 +1146,13 @@ void place_firewall(struct button_t *self)
 
     surface->on_click = NULL;
 
-    state = GAME_STATE_AI_IDLE;
+    state = GAME_STATE_PLAYER_FIREWALL_ANIM;
 
-    ai_move();
+    old_state = pos;
+    old_state.args.fields.firewall_sec = 0;
+    is_firewall_available_sec = false;
+
+    last_time_appear = current_time;
 }
 
 void firewall_p1(struct button_t *self)
@@ -1206,11 +1210,12 @@ void perform_unfirewall(struct button_t *self)
     controls[4]->on_click = NULL;
     surface->on_click = NULL;
 
-    pos.args.fields.firewall_sec = 0;
+    state = GAME_STATE_PLAYER_UNFIREWALL_ANIM;
 
-    state = GAME_STATE_AI_IDLE;
+    old_state = pos;
+    old_state.args.fields.firewall_sec = 0;
 
-    ai_move();
+    last_time_appear = current_time;
 }
 
 void unfirewall_p1(struct button_t *self)
@@ -1271,6 +1276,8 @@ void add_card_controls()
     }
 }
 
+atomic_flag ai_move_mtx;
+
 void *ai_move_thread(void *args)
 {
 #ifdef RNAB_DEBUG
@@ -1280,9 +1287,9 @@ void *ai_move_thread(void *args)
     print_generic_representation(&temp_rep);
 #endif
     minimax_main_result_t move;
-    minimax_iteration_main(ai_level, MAX_SEARCH_TIME, MIN, MAX, true, &pos, &move);
+    minimax_iteration_main(ai_level, MAX_SEARCH_TIME, true, &pos, &move);
 
-    pthread_mutex_lock(&ai_move_mtx);
+    while (atomic_flag_test_and_set_explicit(&ai_move_mtx, memory_order_acquire)) {};
 
     old_state = pos;
 
@@ -1305,7 +1312,7 @@ void *ai_move_thread(void *args)
     sec_texture_ptr = card_to_texture(move_dest, &pos, false);
 
     // now the actual fuckery
-    if (pos.args.fields.firewall_fir != new_field.args.fields.firewall_fir) // ai swapped a card
+    if (pos.args.fields.firewall_fir != new_field.args.fields.firewall_fir) // firewall
     {
         if (pos.args.fields.firewall_fir == 0) // place
         {
@@ -1505,17 +1512,23 @@ void *ai_move_thread(void *args)
     //     add_card_controls();
     // }
 
-    pthread_mutex_unlock(&ai_move_mtx);
+    atomic_flag_clear_explicit(&ai_move_mtx, memory_order_release);
 
     return NULL;
 }
 
+STATIC_BSS uint8_t THREAD_STACK[STACK_SIZE];
+
 void ai_move()
 {
-    pthread_t ai_thread;
-
-    pthread_create(&ai_thread, NULL, ai_move_thread, NULL);
-    pthread_detach(ai_thread);
+    do
+    {
+        thread_create(THREAD_STACK, ai_move_thread);
+        return;
+    } while (0);
+    // should not be reached
+    debug_printf("search thread failed\n");
+    exit(1);
 }
 
 void place_card(struct button_t *self)
@@ -1585,6 +1598,8 @@ void begin_game(struct button_t *self)
     player_field_place_id = 0;
     is_boost_available_fir = true;
     is_boost_available_sec = true;
+    is_firewall_available_fir = true;
+    is_firewall_available_sec = true;
 
     last_time_appear = current_time;
 
@@ -1623,7 +1638,12 @@ void begin_game(struct button_t *self)
 
 int main()
 {
+    // generic_representation tempp = (generic_representation){0xe718000000000000, 0x00000000000018e7, 0xa5000000000000a5, -1, -1, -1, -1, 0, 0, 0, 0, 1, 1};
+    // rnab_compute_best_move(&tempp, 26, UINT32_MAX, true);
+    // return 0;
     srand(time(NULL));
+
+    atomic_flag_clear(&ai_move_mtx);
 
     init("rnab");
 
@@ -1690,15 +1710,58 @@ int main()
         {
         case GAME_STATE_AI_FIREWALL:
         {
-            state = GAME_STATE_PLAYER_IDLE;
-            add_card_controls();
-            break;
-        }
+            start_render();
+            glClear(GL_COLOR_BUFFER_BIT);
 
-        case GAME_STATE_AI_UNFIREWALL:
-        {
-            state = GAME_STATE_PLAYER_IDLE;
-            add_card_controls();
+            const int piece_x = (pos.args.fields.firewall_fir >> 1) & 7;
+            const int piece_y = (pos.args.fields.firewall_fir >> 4) & 7;
+
+            is_firewall_available_fir = false;
+
+            if ((current_time - last_time_appear) < 750000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_enemy, (float)(5 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else if ((current_time - last_time_appear) < 1500000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_enemy, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear - 1500000) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_enemy, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+
+                if ((current_time - last_time_appear) >= 2250000)
+                {
+                    state = GAME_STATE_PLAYER_IDLE;
+                    add_card_controls();
+                }
+            }
+
+            end_render();
             break;
         }
 
@@ -1788,14 +1851,14 @@ int main()
 
         case GAME_STATE_AI_IDLE:
         {
-            pthread_mutex_lock(&ai_move_mtx);
+            while (atomic_flag_test_and_set_explicit(&ai_move_mtx, memory_order_acquire)) {};
             if (state != GAME_STATE_AI_IDLE)
                 break;
             start_render();
             glClear(GL_COLOR_BUFFER_BIT);
 
             render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
-            pthread_mutex_unlock(&ai_move_mtx);
+            atomic_flag_clear_explicit(&ai_move_mtx, memory_order_release);
 
             end_render();
 
@@ -2523,6 +2586,233 @@ int main()
             for (int i = 0; i < decals_size; ++i)
             {
                 render_tex(decals[i]->button_image.texture_ptr, decals[i]->x, decals[i]->y, blend_alpha, blend_alpha, blend_alpha, 255, 0);
+            }
+
+            end_render();
+            break;
+        }
+
+        case GAME_STATE_PLAYER_FIREWALL_ANIM:
+        {
+            start_render();
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            const int piece_x = (pos.args.fields.firewall_sec >> 1) & 7;
+            const int piece_y = (pos.args.fields.firewall_sec >> 4) & 7;
+
+            if ((current_time - last_time_appear) < 750000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_ally, (float)(5 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else if ((current_time - last_time_appear) < 1500000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear - 1500000) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+
+                if ((current_time - last_time_appear) >= 2250000)
+                {
+                    state = GAME_STATE_AI_IDLE;
+                    ai_move();
+                }
+            }
+
+            end_render();
+            break;
+        }
+
+        case GAME_STATE_PLAYER_CHECKER_ANIM:
+        {
+            start_render();
+            glClear(GL_COLOR_BUFFER_BIT);
+            
+            const int square = __builtin_ctzll(enemy_reveal_mask);
+            const int piece_x = square & 7;
+            const int piece_y = (square >> 3) & 7;
+
+            if ((current_time - last_time_appear) < 750000)
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, 0, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&virus_check_ally, (float)(1 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else if ((current_time - last_time_appear) < 1500000)
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, 0, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear - 750000) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&virus_check_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear - 1500000) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&virus_check_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+
+                if ((current_time - last_time_appear) >= 2250000)
+                {
+                    state = GAME_STATE_AI_IDLE;
+                    ai_move();
+                }
+            }
+
+            end_render();
+            break;
+        }
+
+        case GAME_STATE_AI_UNFIREWALL:
+        {
+            start_render();
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            const int piece_x = (old_state.args.fields.firewall_fir >> 1) & 7;
+            const int piece_y = (old_state.args.fields.firewall_fir >> 4) & 7;
+
+            if ((current_time - last_time_appear) < 750000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_vis_enemy, (float)((7 - piece_x) * 54), (float)((9 - piece_y) * 54), 1, 255, 255, 255, 255, 0);
+                render_tex_scale(&firewall_enemy, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else if ((current_time - last_time_appear) < 1500000)
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear - 750000) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_enemy, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else
+            {
+                render_game_field(&pos, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear - 1500000) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_enemy, (float)(5 * 54) + (1.0f - eased) * 27.0f, (float)(1 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+
+                if ((current_time - last_time_appear) >= 2250000)
+                {
+                    is_firewall_available_fir = true;
+                    state = GAME_STATE_PLAYER_IDLE;
+                    add_card_controls();
+                }
+            }
+
+            end_render();
+            break;
+        }
+
+        case GAME_STATE_PLAYER_UNFIREWALL_ANIM:
+        {
+            start_render();
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            const int piece_x = (pos.args.fields.firewall_sec >> 1) & 7;
+            const int piece_y = (pos.args.fields.firewall_sec >> 4) & 7;
+
+            if ((current_time - last_time_appear) < 750000)
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_vis_ally, (float)((7 - piece_x) * 54), (float)((9 - piece_y) * 54), 1, 255, 255, 255, 255, 0);
+                render_tex_scale(&firewall_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else if ((current_time - last_time_appear) < 1500000)
+            {
+                old_state.args.fields.firewall_sec = 0;
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = 1.0f - (float)(current_time - last_time_appear - 750000) / (float)(500000);
+                if (progress < 0.0f)
+                    progress = 0.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_ally, (float)((7 - piece_x) * 54) + (1.0f - eased) * 27.0f, (float)((9 - piece_y) * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+            }
+            else
+            {
+                render_game_field(&old_state, HIDE_ENEMY_CARDS, enemy_reveal_mask, ally_reveal_mask, taken_first_links, taken_first_viruses, taken_second_links, taken_second_viruses);
+
+                float progress = (float)(current_time - last_time_appear - 1500000) / (float)(500000);
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                float eased = 2.0f * progress - progress * progress;
+
+                render_tex_scale(&firewall_ally, (float)(5 * 54) + (1.0f - eased) * 27.0f, (float)(10 * 54) + (1.0f - eased) * 27.0f, eased, 255, 255, 255, (uint8_t)((1.0f - (1.0f - progress) * (1.0f - progress)) * 255.0f), 0);
+
+                if ((current_time - last_time_appear) >= 2250000)
+                {
+                    pos.args.fields.firewall_sec = 0;
+                    is_firewall_available_sec = true;
+                    state = GAME_STATE_AI_IDLE;
+                    ai_move();
+                }
             }
 
             end_render();
