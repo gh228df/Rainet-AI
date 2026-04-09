@@ -746,8 +746,6 @@ __attribute__((__import_module__("wasi_snapshot_preview1"), __import_name__("clo
 #error "Unsupported platform"
 #endif
 
-#ifdef RNAB_MT
-
 #if defined(__linux__)
 
 STATIC_BSS uint8_t stack_buffer[MAX_THREADS * STACK_SIZE] __attribute__((aligned(4096)));
@@ -1129,6 +1127,4 @@ static inline int get_thread_count()
 
 #else
 #error "Unsupported platform"
-#endif
-
 #endif
