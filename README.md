@@ -56,13 +56,13 @@ typedef union
     uint64_t raw;                    // hack to manipulate raw memory
     struct
     {
-        // location for the firewalls (mask is computed as 1ULL << firewall_var)
+        // location for the firewalls (mask is computed as (uint64_t)(firewall_var & 1) << (firewall_var >> 1) )
         uint8_t firewall_fir;
         uint8_t firewall_sec;
 
         uint8_t fir_link;            // captured links by the first player
-        uint8_t sec_link;            // captured viruses by the first player
-        uint8_t fir_virus;           // captured links by the second player
+        uint8_t sec_link;            // captured links by the second player
+        uint8_t fir_virus;           // captured viruses by the first player
         uint8_t sec_virus;           // captured viruses by the second player
 
         bool is_swap_available_fir;  // flag to track swap availability for the first player
