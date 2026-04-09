@@ -75,7 +75,7 @@ static void simulate_game(generic_representation *__restrict__ init_game_state, 
         print_generic_representation(&temp_rep);
 
         get_time(start_it);
-        minimax_iteration_main(analysis_depth, UINT32_MAX, MIN, MAX, player_to_move, &pos, &move);
+        minimax_iteration_main(analysis_depth, UINT32_MAX, player_to_move, &pos, &move);
         player_to_move = !player_to_move;
         get_time(stop_it);
 
@@ -92,7 +92,7 @@ static void simulate_game(generic_representation *__restrict__ init_game_state, 
         print_generic_representation(&temp_rep);
 
         get_time(start_it);
-        minimax_iteration_main(analysis_depth, UINT32_MAX, MIN, MAX, player_to_move, &pos, &move);
+        minimax_iteration_main(analysis_depth, UINT32_MAX, player_to_move, &pos, &move);
         player_to_move = !player_to_move;
         get_time(stop_it);
 
