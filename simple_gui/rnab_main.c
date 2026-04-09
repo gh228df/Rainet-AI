@@ -2,6 +2,7 @@
 #include "amalgamation.h"
 #include <math.h>
 #include <assert.h>
+#include <stdatomic.h>
 
 GLFWwindow *window;
 
@@ -19,7 +20,7 @@ bool is_checker_available_sec;
 bool is_firewall_available_fir;
 bool is_firewall_available_sec;
 
-void render_game_field(field_t *position, bool cover_enemy_cards, uint64_t enemy_reveal_mask, uint64_t ally_reveal_mask, uint8_t taken_first_links, uint8_t taken_first_viruses, uint8_t taken_second_links, uint8_t taken_second_viruses)
+void render_game_field(const field_t *position, bool cover_enemy_cards, uint64_t enemy_reveal_mask, uint64_t ally_reveal_mask, uint8_t taken_first_links, uint8_t taken_first_viruses, uint8_t taken_second_links, uint8_t taken_second_viruses)
 {
     uint64_t fir_link_mask = position->is_link_mask & position->is_fir_mask;
     uint64_t fir_virus_mask = position->is_fir_mask ^ fir_link_mask;
@@ -1278,7 +1279,7 @@ void add_card_controls()
 
 atomic_flag ai_move_mtx;
 
-void *ai_move_thread(void *args)
+void ai_move_thread()
 {
 #ifdef RNAB_DEBUG
     debug_printf("pos: ");
@@ -1513,8 +1514,6 @@ void *ai_move_thread(void *args)
     // }
 
     atomic_flag_clear_explicit(&ai_move_mtx, memory_order_release);
-
-    return NULL;
 }
 
 STATIC_BSS uint8_t THREAD_STACK[STACK_SIZE];
@@ -1523,7 +1522,7 @@ void ai_move()
 {
     do
     {
-        thread_create(THREAD_STACK, ai_move_thread);
+        thread_create(THREAD_STACK + STACK_SIZE, ai_move_thread);
         return;
     } while (0);
     // should not be reached
@@ -1638,9 +1637,6 @@ void begin_game(struct button_t *self)
 
 int main()
 {
-    // generic_representation tempp = (generic_representation){0xe718000000000000, 0x00000000000018e7, 0xa5000000000000a5, -1, -1, -1, -1, 0, 0, 0, 0, 1, 1};
-    // rnab_compute_best_move(&tempp, 26, UINT32_MAX, true);
-    // return 0;
     srand(time(NULL));
 
     atomic_flag_clear(&ai_move_mtx);
