@@ -29,12 +29,12 @@
 
 static inline __attribute__((always_inline)) void rapid_mum(uint64_t *A, uint64_t *B)
 {
-#if defined(__SIZEOF_INT128__)
+#if defined(__SIZEOF_INT128__) && !defined(__wasi__)
   __uint128_t r = *A;
   r *= *B;
   *A = (uint64_t)r;
   *B = (uint64_t)(r >> 64);
-#elif defined(_MSC_VER) && (defined(_WIN64) || defined(_M_HYBRID_CHPE_ARM64))
+#elif defined(_MSC_VER) && (defined(_WIN64) || defined(_M_HYBRID_CHPE_ARM64)) && !defined(__wasi__)
 #if defined(_M_X64)
   *A = _umul128(*A, *B, B);
 #else
@@ -59,14 +59,14 @@ static inline __attribute__((always_inline)) uint64_t rapid_mix(uint64_t A, uint
   return A ^ B;
 }
 
-static inline __attribute__((always_inline)) uint64_t rapidhashNano(const void *__restrict__ key, uint64_t seed)
+static inline __attribute__((always_inline)) uint64_t rapidhashNano(const uint64_t s1, const uint64_t s2, const uint64_t s3, const uint64_t s4, const uint64_t s5, uint64_t seed)
 {
   seed ^= rapid_mix(seed ^ 0x4b33a62ed433d4a3ULL, 0x8bb84b93962eacc9ULL);
-  seed = rapid_mix(*(uint64_t *)((uint8_t *)key + 0) ^ 0x4b33a62ed433d4a3ULL, *(uint64_t *)((uint8_t *)key + 8) ^ seed);
-  seed = rapid_mix(*(uint64_t *)((uint8_t *)key + 16) ^ 0x4b33a62ed433d4a3ULL, *(uint64_t *)((uint8_t *)key + 24) ^ seed);
+  seed = rapid_mix(s1 ^ 0x4b33a62ed433d4a3ULL, s2 ^ seed);
+  seed = rapid_mix(s3 ^ 0x4b33a62ed433d4a3ULL, s4 ^ seed);
 
-  uint64_t a = *(uint64_t *)((uint8_t *)key + 24) ^ 40;
-  uint64_t b = *(uint64_t *)((uint8_t *)key + 32);
+  uint64_t a = s4 ^ 40;
+  uint64_t b = s5;
   
   a ^= 0x8bb84b93962eacc9ULL;
   b ^= seed;
