@@ -6,6 +6,8 @@
 
 STATIC_BSS volatile bool should_exit = false;
 
+#ifndef CLEAR_TT
+
 #if __SIZEOF_POINTER__ == 8
 
 #if defined(__x86_64__)
@@ -61,7 +63,7 @@ STATIC_BSS volatile bool should_exit = false;
     __builtin_memset(table, 0, sizeof(table));
 
 #else
-#error "Unknown 64-bit arch"
+#error "Unknown 64-bit arch, CLEAR_TT() is not defined!"
 #endif
 
 #else
@@ -124,7 +126,9 @@ STATIC_BSS volatile bool should_exit = false;
     __builtin_memset(table, 0, sizeof(table));
 
 #else
-#error "Unknown 32-bit arch"
+#error "Unknown 32-bit arch, CLEAR_TT() is not defined!"
+#endif
+
 #endif
 
 #endif
@@ -743,10 +747,49 @@ __attribute__((__import_module__("wasi_snapshot_preview1"), __import_name__("clo
 #define stop_search_timer(...)
 
 #else
-#error "Unsupported platform"
+
+#if !defined(sys_write) && !defined(_printf)
+#warning "sys_write is not defined, _printf wouldnt work"
+#define sys_write(fd, buf, len)
 #endif
 
-#if defined(__linux__)
+#ifndef get_time
+#warning "get_time is not defined"
+#define get_time(t) 
+#endif
+
+#ifndef get_time_uint
+#warning "get_time_uint is not defined"
+#define get_time_uint(t)
+#endif
+
+#ifndef get_time_diff_millis
+#warning "get_time_diff_millis is not defined"
+#define get_time_diff_millis(stop, start)
+#endif
+
+#ifndef get_time_diff_micros
+#warning "get_time_diff_micros is not defined"
+#define get_time_diff_micros(stop, start)
+#endif
+
+#ifndef start_search_timer
+#warning "start_search_timer is not defined"
+#define start_search_timer(...)
+#endif
+
+#ifndef stop_search_timer
+#warning "stop_search_timer is not defined"
+#define stop_search_timer(...)
+#endif
+
+#endif
+
+#if defined(__wasi__)
+
+#undef RNAB_MT
+
+#elif defined(__linux__)
 
 STATIC_BSS uint8_t stack_buffer[MAX_THREADS * STACK_SIZE] __attribute__((aligned(4096)));
 
@@ -1126,5 +1169,7 @@ static inline int get_thread_count()
 }
 
 #else
-#error "Unsupported platform"
+
+#undef RNAB_MT
+
 #endif
