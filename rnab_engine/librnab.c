@@ -66,9 +66,7 @@ static int32_t generic_representation_to_intern(const generic_representation *__
     f_out->is_sec_mask = game_state->player_second_card_mask;
     f_out->is_link_mask = game_state->link_card_mask;
     f_out->is_boosted_mask = 0;
-
-    f_out->args.fields.firewall_fir = 0;
-    f_out->args.fields.firewall_sec = 0;
+    f_out->args.raw = 0;
 
     // Player one cards may not be on top of player two cards
     if (f_out->is_fir_mask & f_out->is_sec_mask)
@@ -223,3 +221,5 @@ extern EXPORT_API int32_t rnab_compute_best_move(generic_representation *__restr
 
     return 0;
 }
+
+#undef EXPORT_API
