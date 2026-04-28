@@ -36,6 +36,8 @@ Here's what it's currently not great at:
 - **Revealed / covered card knowledge**  
   The engine doesn't yet factor in which cards have been revealed or are known to be covered.
 
+More can be found at: [Implementation Information](docs/implementation.md)
+
 **Targeted Analyzing Depth**
 ---------------------------
 
