@@ -18,9 +18,9 @@ This project is written in **C** and relies on the following external libraries:
 
 ## Integration
 
-Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)
-The library can also be directly integrated, see: [Direct Integration Guide](docs/rnab_h.md)
-This project can be compiled into a standalone library with a simple interface (just 80KB for x86-64) which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)
+Compilation instructions can be found at: [Compilation Guide](docs/compile_instructions.md)<br>
+The library can also be directly integrated, see: [Direct Integration Guide](docs/rnab_h.md)<br>
+This project can be compiled into a standalone library with a simple interface (just 80KB for x86-64) which can be used anywhere else. See [Integration Guide](docs/rnab_usage.md)<br>
 
 ## Current Limitations
 
