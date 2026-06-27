@@ -6,7 +6,7 @@
 #include <windows.h>
 #endif
 
-#define RNAB_MT 1
+// #define RNAB_MT 1
 // #define RNAB_REVCACHE 1
 // #define TRACK_CUTOFF_STATS 1
 
@@ -714,11 +714,17 @@ STATIC_BSS uint64_t best_section_cutoff_tracker_all[32][16];
 STATIC_BSS uint64_t cutoff_stats[32][16];
 STATIC_BSS uint64_t ordered_moves_to_kill[16][32];
 STATIC_BSS uint64_t moves_to_cutoff[32][MAX_MOVES];
+STATIC_BSS uint64_t first_move_cutoff[32];
 
 #define DEF_CUTOFF_VAR() \
     int cutoff_move_id = 0
 
-#define INC_CUTOFF_VAR() \
+#define INC_FIRST_MOVE_CUTOFF() \
+    first_move_cutoff[depth + 1]++;
+
+#define INC_CUTOFF_VAR()                \
+    if (cutoff_move_id == 0)            \
+        first_move_cutoff[depth + 1]--; \
     ++cutoff_move_id
 
 #define DEF_KILL_VAR() \
@@ -759,6 +765,7 @@ STATIC_BSS uint64_t moves_to_cutoff[32][MAX_MOVES];
 #else
 
 #define DEF_CUTOFF_VAR()
+#define INC_FIRST_MOVE_CUTOFF()
 #define INC_CUTOFF_VAR()
 #define DEF_KILL_VAR()
 #define INC_KILL_VAR()
@@ -4212,9 +4219,9 @@ RNAB_HOT_FUNCTION __attribute__((aligned(FUNC_ALIGN))) __attribute__((hot)) stat
 
     int32_t score = MIN;
 
-    DEF_CUTOFF_VAR();
-
     CHECK_WIN_MAX(depth);
+
+    DEF_CUTOFF_VAR();
 
     --depth;
 
@@ -4266,6 +4273,7 @@ RNAB_HOT_FUNCTION __attribute__((aligned(FUNC_ALIGN))) __attribute__((hot)) stat
         }
 
         TRACK_TT_NO_CUTOFF(depth + 1);
+        INC_FIRST_MOVE_CUTOFF();
 
         alphabeg = alpha;
 
@@ -5187,8 +5195,6 @@ __maximize_begin:
     }
     MOVE_SECTION_END(__maximize_begin);
 
-    WRITE_CUTOFF_MOVE();
-
     // [                                                       ][][    ] [   ][              ]
     // [00000000] [00000000] [00000000] [00000000] [00000000] [00000000] [00000000] [00000000]
 
@@ -5238,9 +5244,9 @@ RNAB_HOT_FUNCTION __attribute__((aligned(FUNC_ALIGN))) __attribute__((hot)) stat
 
     int32_t score = MAX;
 
-    DEF_CUTOFF_VAR();
-
     CHECK_WIN_MIN(depth);
+
+    DEF_CUTOFF_VAR();
 
     --depth;
 
@@ -5292,6 +5298,7 @@ RNAB_HOT_FUNCTION __attribute__((aligned(FUNC_ALIGN))) __attribute__((hot)) stat
         }
 
         TRACK_TT_NO_CUTOFF(depth + 1);
+        INC_FIRST_MOVE_CUTOFF();
 
         betabeg = beta;
 
@@ -6217,8 +6224,6 @@ __minimize_begin:
     }
     MOVE_SECTION_END(__minimize_begin);
 
-    WRITE_CUTOFF_MOVE();
-
     // [                                                       ][][    ] [   ][              ]
     // [00000000] [00000000] [00000000] [00000000] [00000000] [00000000] [00000000] [00000000]
 
@@ -6290,6 +6295,8 @@ static void minimax_iteration_main_st_max(const int32_t max_depth, minimax_main_
             ply_stats[i].nodes = 0;
             ply_stats[i].tt_cutoffs = 0;
             ply_stats[i].tt_hits = 0;
+
+            first_move_cutoff[i] = 0;
         }
 #endif
 
@@ -6613,7 +6620,7 @@ static void minimax_iteration_main_st_max(const int32_t max_depth, minimax_main_
                 pct_frac = pct_int % 100000;
             }
 
-            _printf("ply_stats[%d]: nodes=%llu (%llu cutoff), tt: cutoffs/hits = %llu / %llu (cutoff%%=%lld.%05lld)\n", i, ply_stats[i].nodes, cutoff_stats[i][0], ply_stats[i].tt_cutoffs, ply_stats[i].tt_hits, pct_whole, pct_frac);
+           _printf("ply_stats[%d]: nodes=%llu (%llu cutoff, %llu FMC), tt: cutoffs/hits = %llu / %llu (cutoff%%=%lld.%05lld)\n", i, ply_stats[i].nodes, cutoff_stats[i][0], first_move_cutoff[i], ply_stats[i].tt_cutoffs, ply_stats[i].tt_hits, pct_whole, pct_frac);
         }
 #endif
 
@@ -6698,6 +6705,8 @@ static void minimax_iteration_main_st_min(const int32_t max_depth, minimax_main_
             ply_stats[i].nodes = 0;
             ply_stats[i].tt_cutoffs = 0;
             ply_stats[i].tt_hits = 0;
+
+            first_move_cutoff[i] = 0;
         }
 #endif
 
@@ -6997,7 +7006,7 @@ static void minimax_iteration_main_st_min(const int32_t max_depth, minimax_main_
                 pct_frac = pct_int % 100000;
             }
 
-            _printf("ply_stats[%d]: nodes=%llu (%llu cutoff), tt: cutoffs/hits = %llu / %llu (cutoff%%=%lld.%05lld)\n", i, ply_stats[i].nodes, cutoff_stats[i][0], ply_stats[i].tt_cutoffs, ply_stats[i].tt_hits, pct_whole, pct_frac);
+            _printf("ply_stats[%d]: nodes=%llu (%llu cutoff, %llu FMC), tt: cutoffs/hits = %llu / %llu (cutoff%%=%lld.%05lld)\n", i, ply_stats[i].nodes, cutoff_stats[i][0], first_move_cutoff[i], ply_stats[i].tt_cutoffs, ply_stats[i].tt_hits, pct_whole, pct_frac);
         }
 #endif
 
